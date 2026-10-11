@@ -102,7 +102,7 @@ input[type=range]{accent-color:var(--accent);flex:1;min-width:0}
         <button id="fit" hidden>Fit view</button>
         <button id="snap" hidden aria-pressed="false" style="grid-column:1/-1">Snap into snake <span class="time">F</span></button>
       </div>
-      <p class="note" id="exploreNote" hidden>Click the view to look around with the mouse (Esc frees it). W A S D or arrows to move, Space or E to rise, C or Q to sink, Shift to go faster, scroll wheel to change speed. On a phone, drag to look and drag with two fingers to move. Fly inside the snake to see the frame from that moment. Press F to snap into the snake and ride it: W and S glide through the movie with the frame kept centered.</p>
+      <p class="note" id="exploreNote" hidden>Click the view to look around with the mouse (Esc frees it). W A S D or arrows to move, Space or E to rise, C or Q to sink, Shift to go faster, scroll wheel to change speed. On a phone, drag to look and drag with two fingers to move. Fly inside the snake to see the frame from that moment. Press F to snap into the snake and ride it: W and S glide through the movie with the frame kept centered. Space or F unsnaps. The - and = keys change the screen size.</p>
     </section>
 
     <section id="rigPanel">
@@ -191,11 +191,12 @@ let quad=[[.2,.2,.2],[.2,.2,.2],[.2,.2,.2],[.2,.2,.2]];
 const tq=new T.Quaternion(), vr=new T.Vector3(), vu=new T.Vector3(), vf=new T.Vector3(), tc=new T.Color();
 function axes(){vr.copy(X).applyQuaternion(Q);vu.copy(Y).applyQuaternion(Q);vf.copy(Z).applyQuaternion(Q);}
 
-const ringT=new Float32Array(CAP), ringC=new Float32Array(CAP*3), rigPose=new Float32Array(CAP*9);
+const ringT=new Float32Array(CAP), ringS=new Float32Array(CAP), ringC=new Float32Array(CAP*3), rigPose=new Float32Array(CAP*9);
 function pushRing(){
   if(n>=CAP) return;
   axes();
   ringC[n*3]=P.x; ringC[n*3+1]=P.y; ringC[n*3+2]=P.z;
+  ringS[n]=lensScale;
   if(source==='video') ringT[n]=vid.currentTime;
   else{ringT[n]=rig.time; rigPose.set([rig.pos.x,rig.pos.y,rig.pos.z,rig.yaw,rig.pitch,rig.roll,rig.tanV,frameI,palI],n*9);}
   const w=aspect*wF/2*lensScale,h=hF/2*lensScale, cs=[[w,-h],[-w,-h],[-w,h],[w,h]];
@@ -222,6 +223,7 @@ function resetSnake(){
 
 /* ---------- settings ---------- */
 const CFG=[
+  {k:'screen',label:'Screen size (viewing only)',range:[0.3,1.6,0.05],def:1},
   {k:'zoom',label:'Zoom',opts:[['size','Resizes frame'],['speed','Changes speed'],['none','Nothing']],def:'size'},
   {k:'dolly',label:'Dolly in and out',opts:[['move','Moves snake'],['size','Resizes frame'],['both','Both']],def:'move'},
   {k:'back',label:'Pull-outs faster than the drift',opts:[['stall','Stall'],['retract','Back up']],def:'stall'},
@@ -506,6 +508,7 @@ function layout(){
   cam.far=1000; cam.updateProjectionMatrix();
 }
 window.addEventListener('resize',layout);
+function viewDist(){const th=Math.tan(22.5*D2R),k=cfg.screen;return Math.max(1/(Math.min(.98,.56*k)*2*th),aspect/(Math.min(.98,.76*k)*2*th*cam.aspect));}
 const msg=$('msg'); function showMsg(t){msg.textContent=t;msg.hidden=!t;}
 
 $('file').addEventListener('change',e=>{
@@ -658,11 +661,11 @@ function sliceStep(){
   if(s<0) rX.negate();
   tmp.crossVectors(rX,rU);
   basis.makeBasis(rX,rU,tmp); pane.quaternion.setFromRotationMatrix(basis);
-  pane.position.copy(rC); pane.scale.set(sz.w*0.995,sz.h*0.995,1);
+  const fs=ringS[j]; pane.position.copy(rC); pane.scale.set(aspect*fs,fs,1);
   if(riding){
     pane.quaternion.copy(cam.quaternion);
-    pane.position.copy(cp).addScaledVector(look,ahead);
-    pane.scale.set(s0.w,s0.h,1);
+    const sc=ringS[bi]; pane.position.copy(cp).addScaledVector(look,viewDist()*sc);
+    pane.scale.set(aspect*sc,sc,1);
   }
   if(paneMat.depthTest===riding){paneMat.depthTest=!riding;paneMat.needsUpdate=true;}
   const wantMap=source==='video'?seekTex:sliceTex;
@@ -779,8 +782,11 @@ const KEYS={ArrowLeft:'panL',ArrowRight:'panR',ArrowUp:'tiltU',ArrowDown:'tiltD'
 const typing=e=>e.target instanceof HTMLInputElement&&e.target.type!=='range';
 document.addEventListener('keydown',e=>{
   if(typing(e)||e.metaKey||e.ctrlKey||e.altKey) return;
+  if(e.code==='Minus'||e.code==='Equal'||e.code==='NumpadSubtract'||e.code==='NumpadAdd'){
+    const up=e.code==='Equal'||e.code==='NumpadAdd'; cfg.screen=Math.round(Math.max(0.3,Math.min(1.6,cfg.screen+(up?0.05:-0.05)))*100)/100; saveCfg(); renderCfg(); return;}
   if(explore){
     if(e.code==='KeyF'&&!e.repeat){e.preventDefault();toggleRide();return;}
+    if(riding&&e.code==='Space'){e.preventDefault();if(!e.repeat)stopRide();return;}
     const f=FLY[e.code]; if(f){e.preventDefault();fly.add(f);}
     else if(e.code==='KeyM'&&source==='video'&&!e.repeat) setMuted(!vid.muted);
     return;
@@ -891,8 +897,8 @@ function loop(now){
   if(explore) exploreStep(rdt);
   head.scale.setScalar(lensScale);
   if(explore) {}
-  else{cam.position.copy(P).addScaledVector(vf,D*lensScale); cam.up.copy(vu); cam.lookAt(P);
-    scene.fog.near=(D+1)*lensScale; scene.fog.far=(D+45)*lensScale;}
+  else{const vd=viewDist(); cam.position.copy(P).addScaledVector(vf,vd*lensScale); cam.up.copy(vu); cam.lookAt(P);
+    scene.fog.near=(vd+1)*lensScale; scene.fog.far=(vd+45)*lensScale;}
   ren.render(scene,cam);
   readout(now);
   requestAnimationFrame(loop);
