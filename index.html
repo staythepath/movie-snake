@@ -100,8 +100,9 @@ input[type=range]{accent-color:var(--accent);flex:1;min-width:0}
         <button id="reset">Reset snake</button>
         <button id="explore">Explore snake</button>
         <button id="fit" hidden>Fit view</button>
+        <button id="snap" hidden aria-pressed="false" style="grid-column:1/-1">Snap into snake <span class="time">F</span></button>
       </div>
-      <p class="note" id="exploreNote" hidden>Click the view to look around with the mouse (Esc frees it). W A S D or arrows to move, Space or E to rise, C or Q to sink, Shift to go faster, scroll wheel to change speed. On a phone, drag to look and drag with two fingers to move. Fly inside the snake to see the frame from that moment.</p>
+      <p class="note" id="exploreNote" hidden>Click the view to look around with the mouse (Esc frees it). W A S D or arrows to move, Space or E to rise, C or Q to sink, Shift to go faster, scroll wheel to change speed. On a phone, drag to look and drag with two fingers to move. Fly inside the snake to see the frame from that moment. Press F to snap into the snake and ride it: W and S glide through the movie with the frame kept centered.</p>
     </section>
 
     <section id="rigPanel">
@@ -231,7 +232,8 @@ const CFG=[
   {k:'strength',label:'Motion strength',range:[0,3,0.1],def:1},
   {k:'meter',label:'Lens travel scale',range:[0,3,0.1],def:1},
   {k:'sens',label:'Look sensitivity',range:[0.25,3,0.05],def:1},
-  {k:'invert',label:'Look up and down',opts:[['0','Normal'],['1','Inverted']],def:'0'}];
+  {k:'invert',label:'Look up and down',opts:[['0','Normal'],['1','Inverted']],def:'0'},
+  {k:'snap',label:'Snap in when you fly inside the snake',opts:[['0','Off'],['1','On']],def:'0'}];
 const cfg={}; CFG.forEach(c=>cfg[c.k]=c.def);
 try{const sv=JSON.parse(localStorage.getItem('movieSnake.settings')||'{}');CFG.forEach(c=>{if(sv[c.k]!==undefined&&(c.range?typeof sv[c.k]==='number':c.opts.some(o=>o[0]===sv[c.k])))cfg[c.k]=sv[c.k];});}catch(_){}
 function saveCfg(){try{localStorage.setItem('movieSnake.settings',JSON.stringify(cfg));}catch(_){}}
@@ -531,13 +533,14 @@ vid.addEventListener('error',()=>{if(vid.src)showMsg("This browser can't play th
 
 /* ---------- controls ---------- */
 /* ---------- explore mode: first-person fly camera ---------- */
+let riding=false, rideS=0, rideDir=1, noAuto=false;
 let explore=false, tween=null, savedHint='', flyMul=1, snakeR=10, dragging=false;
 const camE={yaw:0,pitch:0}, touches=new Map(), touchMove={x:0,y:0};
 const canvasEl=ren.domElement;
 const fly=new Set(), FLY={KeyW:'f',ArrowUp:'f',KeyS:'b',ArrowDown:'b',KeyA:'l',ArrowLeft:'l',KeyD:'r',ArrowRight:'r',Space:'u',KeyE:'u',KeyC:'d',KeyQ:'d',ShiftLeft:'fast',ShiftRight:'fast'};
 function applyLook(){cam.rotation.order='YXZ';cam.rotation.set(camE.pitch,camE.yaw,0);}
 function lookFromDir(d){camE.yaw=Math.atan2(-d.x,-d.z);camE.pitch=Math.asin(Math.max(-1,Math.min(1,d.y)));}
-function turn(dx,dy){const q=0.0022*cfg.sens;camE.yaw-=dx*q;camE.pitch=Math.max(-1.55,Math.min(1.55,camE.pitch-dy*q*(cfg.invert==='1'?-1:1)));applyLook();tween=null;}
+function turn(dx,dy){if(riding)return;const q=0.0022*cfg.sens;camE.yaw-=dx*q;camE.pitch=Math.max(-1.55,Math.min(1.55,camE.pitch-dy*q*(cfg.invert==='1'?-1:1)));applyLook();tween=null;}
 function snakeBounds(){
   const b=new T.Box3(), v=new T.Vector3();
   for(let i=0;i<n*4;i++){v.fromArray(pos,i*3);b.expandByPoint(v);}
@@ -564,20 +567,21 @@ function enterExplore(){
   scene.fog.near=1e5; scene.fog.far=2e5;
   fitView();
   canvasEl.style.touchAction='none'; canvasEl.style.cursor='crosshair';
-  $('explore').textContent='Back to playback'; $('fit').hidden=false; $('exploreNote').hidden=false;
+  $('explore').textContent='Back to playback'; $('fit').hidden=false; $('snap').hidden=false; $('exploreNote').hidden=false;
   savedHint=$('hint').textContent; lastSlice=-1; restoreHint();
 }
 function exitExplore(){
   if(!explore) return;
-  explore=false; tween=null; fly.clear(); touches.clear(); dragging=false; pane.visible=false; inside=-1;
+  if(riding){riding=false;syncSnap();} explore=false; tween=null; fly.clear(); touches.clear(); dragging=false; pane.visible=false; inside=-1;
   if(document.pointerLockElement===canvasEl&&document.exitPointerLock) document.exitPointerLock();
   canvasEl.style.touchAction=''; canvasEl.style.cursor='';
   layout();
-  $('explore').textContent='Explore snake'; $('fit').hidden=true; $('exploreNote').hidden=true;
+  $('explore').textContent='Explore snake'; $('fit').hidden=true; $('snap').hidden=true; $('exploreNote').hidden=true;
   $('hint').textContent=savedHint;
 }
 $('explore').addEventListener('click',()=>{if(explore)toggle();else enterExplore();});
-$('fit').addEventListener('click',fitView);
+$('fit').addEventListener('click',()=>{if(riding)stopRide();fitView();});
+$('snap').addEventListener('click',()=>{toggleRide();$('snap').blur();});
 vid.addEventListener('ended',enterExplore);
 canvasEl.addEventListener('pointerdown',e=>{
   if(!explore) return;
@@ -601,7 +605,7 @@ canvasEl.addEventListener('wheel',e=>{if(!explore)return;e.preventDefault();flyM
 document.addEventListener('pointerlockchange',()=>{$('xhair').hidden=document.pointerLockElement!==canvasEl;});
 /* ---------- slice view: the movie frame at your spot inside the snake ---------- */
 const paneMat=new T.MeshBasicMaterial({color:0xffffff,side:T.DoubleSide,toneMapped:false});
-const pane=new T.Mesh(new T.PlaneGeometry(1,1),paneMat); pane.visible=false; scene.add(pane);
+const pane=new T.Mesh(new T.PlaneGeometry(1,1),paneMat); pane.visible=false; pane.renderOrder=10; scene.add(pane);
 pane.add(new T.LineSegments(new T.EdgesGeometry(new T.PlaneGeometry(1,1)),new T.LineBasicMaterial({color:0xe2b866})));
 const slice2D=document.createElement('canvas'); slice2D.width=RW; slice2D.height=RH;
 const sliceCtx=slice2D.getContext('2d');
@@ -655,6 +659,12 @@ function sliceStep(){
   tmp.crossVectors(rX,rU);
   basis.makeBasis(rX,rU,tmp); pane.quaternion.setFromRotationMatrix(basis);
   pane.position.copy(rC); pane.scale.set(sz.w*0.995,sz.h*0.995,1);
+  if(riding){
+    pane.quaternion.copy(cam.quaternion);
+    pane.position.copy(cp).addScaledVector(look,ahead);
+    pane.scale.set(s0.w,s0.h,1);
+  }
+  if(paneMat.depthTest===riding){paneMat.depthTest=!riding;paneMat.needsUpdate=true;}
   const wantMap=source==='video'?seekTex:sliceTex;
   if(paneMat.map!==wantMap){paneMat.map=wantMap;paneMat.needsUpdate=true;}
   pane.visible=!!wantMap;
@@ -666,8 +676,43 @@ function sliceStep(){
 }
 function restoreHint(){if(explore)$('hint').textContent='Exploring the snake. Fly inside it to see the frame from that moment.';}
 
+/* ---------- ride mode: locked to the snake's center line ---------- */
+const rq=new T.Quaternion(), rm=new T.Matrix4(), rCen=new T.Vector3(), rTgt=new T.Vector3(), rA=new T.Vector3(), rB=new T.Vector3();
+function syncSnap(){const b=$('snap');b.setAttribute('aria-pressed',String(riding));b.innerHTML=(riding?'Unsnap':'Snap into snake')+' <span class="time">F</span>';}
+function nearestRing(p){let bi=0,bd=1e18;for(let i=0;i<n;i++){const o=i*3,dx=ringC[o]-p.x,dy=ringC[o+1]-p.y,dz=ringC[o+2]-p.z,d=dx*dx+dy*dy+dz*dz;if(d<bd){bd=d;bi=i;}}return bi;}
+function startRide(i){
+  if(n<2) return;
+  riding=true; tween=null; rideS=Math.max(0,Math.min(n-1,i));
+  ringFrame(Math.round(rideS)); cam.getWorldDirection(look); rideDir=look.dot(rF)>=0?1:-1;
+  syncSnap();
+}
+function stopRide(){riding=false; noAuto=true; cam.getWorldDirection(look); lookFromDir(look); applyLook(); syncSnap();}
+function toggleRide(){if(!explore)return; if(riding)stopRide(); else startRide(nearestRing(cam.position));}
+function rideStep(dt){
+  let sp=1.5*flyMul*(fly.has('fast')?4:1), d=0;
+  if(fly.has('f'))d+=sp*dt; if(fly.has('b'))d-=sp*dt;
+  d+=-touchMove.y*sp*0.01; touchMove.x=touchMove.y=0;
+  let dir=Math.sign(d)*rideDir, rem=Math.abs(d);
+  for(let g=0;g<20000&&rem>1e-9;g++){
+    const cur=rideS, nb=dir>0?Math.floor(cur)+1:Math.ceil(cur)-1;
+    if(nb<0||nb>n-1) break;
+    const k=Math.min(cur,nb)|0; rA.fromArray(ringC,k*3); rB.fromArray(ringC,(k+1)*3);
+    const len=Math.max(0.02,rA.distanceTo(rB)), cost=Math.abs(nb-cur)*len;
+    if(rem>=cost){rem-=cost;rideS=nb;} else {rideS+=dir*rem/len;rem=0;}
+  }
+  rideS=Math.max(0,Math.min(n-1,rideS));
+  const k=Math.floor(rideS), k2=Math.min(k+1,n-1), t=rideS-k;
+  rA.fromArray(ringC,k*3); rB.fromArray(ringC,k2*3); rCen.lerpVectors(rA,rB,t);
+  ringFrame(t<0.5?k:k2);
+  rTgt.copy(rCen).addScaledVector(rF,rideDir);
+  rm.lookAt(rCen,rTgt,rU); rq.setFromRotationMatrix(rm);
+  const a=1-Math.exp(-dt*10);
+  cam.position.lerp(rCen,a); cam.quaternion.slerp(rq,a);
+}
+
 const fv1=new T.Vector3(), fv2=new T.Vector3(), mv=new T.Vector3();
 function exploreStep(dt){
+  if(riding){rideStep(dt);sliceStep();return;}
   if(tween){
     tween.t+=dt; const k=Math.min(1,tween.t/tween.dur), e=k<.5?4*k*k*k:1-Math.pow(-2*k+2,3)/2;
     cam.position.lerpVectors(tween.p0,tween.p1,e);
@@ -689,6 +734,8 @@ function exploreStep(dt){
     touchMove.x=touchMove.y=0; tween=null;
   }
   sliceStep();
+  if(inside<0) noAuto=false;
+  else if(cfg.snap==='1'&&!noAuto&&!tween) startRide(inside);
 }
 
 /* ---------- sound ---------- */
@@ -733,6 +780,7 @@ const typing=e=>e.target instanceof HTMLInputElement&&e.target.type!=='range';
 document.addEventListener('keydown',e=>{
   if(typing(e)||e.metaKey||e.ctrlKey||e.altKey) return;
   if(explore){
+    if(e.code==='KeyF'&&!e.repeat){e.preventDefault();toggleRide();return;}
     const f=FLY[e.code]; if(f){e.preventDefault();fly.add(f);}
     else if(e.code==='KeyM'&&source==='video'&&!e.repeat) setMuted(!vid.muted);
     return;

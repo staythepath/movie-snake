@@ -14,6 +14,7 @@ Open `index.html` in a browser (or serve the folder with any static server). Eve
   - **Snake follows → The lens** copies your exact moves. **Tracker** uses only what the picture shows, the same as with a movie.
 - **Explore snake** (automatic when a movie ends) is a first-person fly camera: click to look with the mouse (Esc frees it), W A S D or arrows to move, Space/E up, C/Q down, Shift to go faster, scroll wheel for speed. On phones, drag to look and two-finger drag to move.
   Fly inside the snake to see the movie frame from that moment.
+  Press **F** (or **Snap into snake**) to ride the snake: the camera locks to its center line and W/S glide through the movie with the current frame centered. A setting can snap you in automatically when you fly inside.
 
 ## Settings
 
