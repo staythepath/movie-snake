@@ -15,6 +15,10 @@ Open `index.html` in a browser (or serve the folder with any static server). Eve
 - **Explore snake** (automatic when a movie ends) is a first-person fly camera: click to look with the mouse (Esc frees it), W A S D or arrows to move, Space/E up, C/Q down, Shift to go faster, scroll wheel for speed. On phones, drag to look and two-finger drag to move.
   Fly inside the snake to see the movie frame from that moment.
 
+## Settings
+
+The Settings panel changes how camera moves shape the snake: what zooms and dollies do (resize the frame, change speed, or move the snake), whether fast pull-outs stall or back the snake up, how a movie's push-ins and sideways motion are drawn, whether frame size resets at cuts, plus forward drift, motion strength, lens travel scale, and look sensitivity. Settings are remembered in your browser. **Reset to defaults** restores the original behavior.
+
 ## How movement is read from a movie
 
 The page estimates camera motion live from how the picture shifts between frames (block matching plus a fitted shift, scale, and rotation). It catches pans, tilts, rolls, zooms, and push-ins (a push-in from a movie grows the frame, since the picture alone can't separate it from a zoom), and it detects cuts and letterboxing. From the picture alone it can't tell a sideways truck from a pan, so a toggle chooses whether that motion bends or slides the snake. Exact meter-for-meter lens paths would need an offline 3D camera-tracking pass.

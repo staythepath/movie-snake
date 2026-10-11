@@ -52,6 +52,10 @@ input[type=range]{accent-color:var(--accent);flex:1;min-width:0}
 .read{font:400 12px/1.6 var(--mono);color:var(--muted);font-variant-numeric:tabular-nums;display:grid;grid-template-columns:auto minmax(0,1fr);column-gap:10px}
 .read b{font-weight:500;color:var(--fg)}
 .read span{overflow-wrap:anywhere}
+.cfg{display:flex;flex-direction:column;gap:12px}
+.cfg .lab{font:500 13px/1.3 var(--display);display:flex;justify-content:space-between;gap:8px;margin-bottom:5px}
+.cfg .lab span{font:400 12px var(--mono);color:var(--muted);font-variant-numeric:tabular-nums}
+.cfg .seg button{font-size:13px;padding:0 6px;min-height:32px}
 .btn2{display:grid;grid-template-columns:1fr 1fr;gap:6px}
 :focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 @media (max-width:820px){
@@ -129,15 +133,9 @@ input[type=range]{accent-color:var(--accent);flex:1;min-width:0}
     </section>
 
     <section>
-      <div class="h">Snake shape</div>
-      <div id="trkOpts">
-        <p class="note" style="margin-bottom:8px">From the picture alone, a pan and a sideways slide look the same. Choose how the tracker draws them.</p>
-        <div class="seg" role="group" aria-label="Tracker sideways motion">
-          <button id="mBend" aria-pressed="true">Bend</button>
-          <button id="mSlide" aria-pressed="false">Slide</button>
-        </div>
-      </div>
-      <div class="row"><label class="h" for="bend" style="min-width:78px">Strength</label><input type="range" id="bend" min="0" max="3" step="0.1" value="1"><span class="time" id="bendOut">1.0×</span></div>
+      <div class="h">Settings</div>
+      <div id="cfg" class="cfg"></div>
+      <button id="resetCfg">Reset to defaults</button>
     </section>
 
     <section>
@@ -186,7 +184,7 @@ screen.add(new T.LineSegments(new T.EdgesGeometry(new T.PlaneGeometry(1,1)),new 
 const SPEED=0.6, ZG=6, SEG=1/15;
 let lensScale=1;
 let P=new T.Vector3(), Q=new T.Quaternion(), n=0, dirty=-1, segT=0, cuts=0;
-const opts={slide:false,bend:1,follow:'you'};
+const opts={follow:'you'};
 let aspect=16/9, wF=1, hF=1, D=3;
 let quad=[[.2,.2,.2],[.2,.2,.2],[.2,.2,.2],[.2,.2,.2]];
 const tq=new T.Quaternion(), vr=new T.Vector3(), vu=new T.Vector3(), vf=new T.Vector3(), tc=new T.Color();
@@ -221,20 +219,43 @@ function resetSnake(){
   geo.setDrawRange(0,0); pushRing();
 }
 
-/* M = how the lens rectangle moves: yaw/pitch/roll in rad/s; fwd/rx/uy in snake units per second along the lens's own forward/right/up.
-   The snake always drifts forward at SPEED (time passing); lens moves add to that. */
-const METER=0.5;
+/* ---------- settings ---------- */
+const CFG=[
+  {k:'zoom',label:'Zoom',opts:[['size','Resizes frame'],['speed','Changes speed'],['none','Nothing']],def:'size'},
+  {k:'dolly',label:'Dolly in and out',opts:[['move','Moves snake'],['size','Resizes frame'],['both','Both']],def:'move'},
+  {k:'back',label:'Pull-outs faster than the drift',opts:[['stall','Stall'],['retract','Back up']],def:'stall'},
+  {k:'track',label:'Movie push-ins and zooms',opts:[['size','Resize frame'],['speed','Change speed']],def:'size'},
+  {k:'sideways',label:'Movie sideways motion',opts:[['bend','Bends snake'],['slide','Slides snake']],def:'bend'},
+  {k:'cutReset',label:'Frame size at cuts',opts:[['1','Resets'],['0','Carries over']],def:'1'},
+  {k:'drift',label:'Forward drift',range:[0,3,0.1],def:1},
+  {k:'strength',label:'Motion strength',range:[0,3,0.1],def:1},
+  {k:'meter',label:'Lens travel scale',range:[0,3,0.1],def:1},
+  {k:'sens',label:'Look sensitivity',range:[0.25,3,0.05],def:1},
+  {k:'invert',label:'Look up and down',opts:[['0','Normal'],['1','Inverted']],def:'0'}];
+const cfg={}; CFG.forEach(c=>cfg[c.k]=c.def);
+try{const sv=JSON.parse(localStorage.getItem('movieSnake.settings')||'{}');CFG.forEach(c=>{if(sv[c.k]!==undefined&&(c.range?typeof sv[c.k]==='number':c.opts.some(o=>o[0]===sv[c.k])))cfg[c.k]=sv[c.k];});}catch(_){}
+function saveCfg(){try{localStorage.setItem('movieSnake.settings',JSON.stringify(cfg));}catch(_){}}
+
+/* M = how the lens rectangle moves: yaw/pitch/roll in rad/s; sizeRate = log growth of the frame per s;
+   speedAdd/rx/uy in snake units per second along the lens's forward/right/up. The snake also drifts forward as time passes. */
+const METER=0.5; let lastSpeed=SPEED;
 function integrate(M,dt){
-  const k=opts.bend;
+  const k=cfg.strength;
   tq.setFromAxisAngle(Y,M.yaw*k*dt); Q.multiply(tq);
   tq.setFromAxisAngle(X,M.pitch*k*dt); Q.multiply(tq);
-  tq.setFromAxisAngle(Z,M.roll*dt); Q.multiply(tq); Q.normalize(); axes();
-  if(M.scale!==undefined) lensScale=Math.pow(M.scale,k);
-  else lensScale=Math.max(0.15,Math.min(12,lensScale*Math.exp(k*(M.zoom||0)*dt)));
-  P.addScaledVector(vf,Math.max(0,SPEED+k*M.fwd)*dt).addScaledVector(vr,k*M.rx*dt).addScaledVector(vu,k*M.uy*dt);
+  tq.setFromAxisAngle(Z,M.roll*k*dt); Q.multiply(tq); Q.normalize(); axes();
+  lensScale=Math.max(0.15,Math.min(12,lensScale*Math.exp(k*M.sizeRate*dt)));
+  let v=cfg.drift*SPEED+k*M.speedAdd; if(cfg.back==='stall') v=Math.max(0,v); lastSpeed=v;
+  P.addScaledVector(vf,v*dt).addScaledVector(vr,k*M.rx*dt).addScaledVector(vu,k*M.uy*dt);
   segT+=dt; while(segT>=SEG){pushRing();segT-=SEG;}
 }
-const growth=M=>'×'+(Math.max(0,SPEED+opts.bend*M.fwd)/SPEED).toFixed(1);
+function rigInput(){
+  const R=Mrig, m=METER*cfg.meter; let sizeRate=0, speedAdd=0;
+  if(cfg.zoom==='size') sizeRate+=R.zoom; else if(cfg.zoom==='speed') speedAdd+=SPEED*ZG*R.zoom;
+  if(cfg.dolly!=='size') speedAdd+=m*R.dolly;
+  if(cfg.dolly!=='move') sizeRate+=R.dolly/Math.max(0.5,R.depth);
+  return {yaw:R.yaw,pitch:R.pitch,roll:R.roll,sizeRate,speedAdd,rx:m*R.truck,uy:m*R.crane};
+}
 
 /* ---------- picture analysis (the tracker) ---------- */
 const AW=160; let AH=90;
@@ -349,8 +370,9 @@ function analyze(el,t,hfov,vfov){
   return cut;
 }
 function trackerInput(hfov,vfov){
-  if(opts.slide) return {yaw:0,pitch:0,roll:S.roll,fwd:0,zoom:S.zoom,rx:-S.yaw/hfov*aspect*wF,uy:S.pitch/vfov*hF};
-  return {yaw:S.yaw,pitch:S.pitch,roll:S.roll,fwd:0,zoom:S.zoom,rx:0,uy:0};
+  const sizeRate=cfg.track==='size'?S.zoom:0, speedAdd=cfg.track==='speed'?SPEED*ZG*S.zoom:0;
+  if(cfg.sideways==='slide') return {yaw:0,pitch:0,roll:S.roll,sizeRate,speedAdd,rx:-S.yaw/hfov*aspect*wF,uy:S.pitch/vfov*hF};
+  return {yaw:S.yaw,pitch:S.pitch,roll:S.roll,sizeRate,speedAdd,rx:0,uy:0};
 }
 
 /* ---------- test rig: a small 3D world the virtual camera moves through ---------- */
@@ -390,7 +412,7 @@ const rc=new T.PerspectiveCamera(45,16/9,0.1,400); rc.rotation.order='YXZ';
 const rig={pos:new T.Vector3(),yaw:0,pitch:0,roll:0,tanV:Math.tan(22.5*D2R),prevPos:new T.Vector3(),prevTan:0,justCut:true,anchor:null,depth:10,time:0};
 const cv={pan:0,tilt:0,roll:0,dolly:0,zoom:0,truck:0,crane:0,dz:0};
 const BASE={pan:0.5,tilt:0.35,roll:0.35,dolly:1.6,zoom:0.45,truck:1.6,crane:1.0,dz:1.3};
-const Mrig={yaw:0,pitch:0,roll:0,fwd:0,rx:0,uy:0,dolly:0,truck:0,crane:0,zoom:0,scale:1};
+const Mrig={yaw:0,pitch:0,roll:0,dolly:0,truck:0,crane:0,zoom:0,depth:10};
 const FRAMES=[{n:'16:9',x:0,y:0,w:RW,h:RH},{n:'2.39:1',x:0,y:46,w:RW,h:268},{n:'4:3',x:80,y:0,w:480,h:RH}];
 let frameI=0, speed=1;
 const ray=new T.Raycaster(), C0=new T.Vector2(0,0);
@@ -431,14 +453,13 @@ function rigUpdate(dt){
   rig.tanV=Math.max(Math.tan(4*D2R),Math.min(Math.tan(60*D2R),rig.tanV));
   rig.pos.y=Math.max(0.25,rig.pos.y);
   rigCamAxes();
-  if(rig.justCut){for(const k in Mrig)Mrig[k]=0;Mrig.scale=Math.tan(22.5*D2R)/rig.tanV;}
+  const ch=centerHit(); Mrig.depth=ch?Math.max(0.5,ch.distance):60;
+  if(rig.justCut){for(const k in Mrig)if(k!=='depth')Mrig[k]=0;}
   else{
     dv.copy(rig.pos).sub(rig.prevPos);
     Mrig.yaw=cv.pan; Mrig.pitch=cv.tilt; Mrig.roll=cv.roll;
     Mrig.dolly=dv.dot(rfw)/dt; Mrig.truck=dv.dot(rgt)/dt; Mrig.crane=dv.dot(rup)/dt;
     Mrig.zoom=Math.log(rig.prevTan/rig.tanV)/dt;
-    Mrig.fwd=METER*Mrig.dolly; Mrig.scale=Math.tan(22.5*D2R)/rig.tanV;
-    Mrig.rx=METER*Mrig.truck; Mrig.uy=METER*Mrig.crane;
   }
 }
 function renderRig(){
@@ -500,7 +521,7 @@ vid.addEventListener('loadedmetadata',()=>{
   vtex=new T.VideoTexture(vid); vtex.encoding=T.sRGBEncoding;
   screenMat.map=vtex; screenMat.needsUpdate=true; screen.scale.set(aspect,1,1);
   sizeAnalysis(); layout(); resetSnake(); ensureSeekVid();
-  $('rigPanel').hidden=true; $('scrubRow').hidden=false; $('soundRow').hidden=false; $('trkOpts').hidden=false;
+  $('rigPanel').hidden=true; $('scrubRow').hidden=false; $('soundRow').hidden=false;
   $('hint').textContent=fileName;
   vid.muted=false; autoMuted=false;
   vid.play().catch(()=>{vid.muted=true;autoMuted=true;return vid.play();}).then(()=>{syncPlay();syncSound();}).catch(()=>{syncPlay();syncSound();});
@@ -516,7 +537,7 @@ const canvasEl=ren.domElement;
 const fly=new Set(), FLY={KeyW:'f',ArrowUp:'f',KeyS:'b',ArrowDown:'b',KeyA:'l',ArrowLeft:'l',KeyD:'r',ArrowRight:'r',Space:'u',KeyE:'u',KeyC:'d',KeyQ:'d',ShiftLeft:'fast',ShiftRight:'fast'};
 function applyLook(){cam.rotation.order='YXZ';cam.rotation.set(camE.pitch,camE.yaw,0);}
 function lookFromDir(d){camE.yaw=Math.atan2(-d.x,-d.z);camE.pitch=Math.asin(Math.max(-1,Math.min(1,d.y)));}
-function turn(dx,dy){camE.yaw-=dx*0.0022;camE.pitch=Math.max(-1.55,Math.min(1.55,camE.pitch-dy*0.0022));applyLook();tween=null;}
+function turn(dx,dy){const q=0.0022*cfg.sens;camE.yaw-=dx*q;camE.pitch=Math.max(-1.55,Math.min(1.55,camE.pitch-dy*q*(cfg.invert==='1'?-1:1)));applyLook();tween=null;}
 function snakeBounds(){
   const b=new T.Box3(), v=new T.Vector3();
   for(let i=0;i<n*4;i++){v.fromArray(pos,i*3);b.expandByPoint(v);}
@@ -736,16 +757,34 @@ function syncFollow(){
   const you=opts.follow==='you';
   $('fYou').setAttribute('aria-pressed',String(you)); $('fTrk').setAttribute('aria-pressed',String(!you));
   $('followNote').textContent=you
-    ?'The snake copies the lens exactly, as if a flat rectangle were taped over it. It turns when the lens turns and moves when the lens moves, meter for meter, while drifting forward as time passes. Zooming doesn't move the lens, so it changes the frame's size instead.'
+    ?'The snake copies the lens exactly, as if a flat rectangle were taped over it. It turns when the lens turns and moves when the lens moves, meter for meter, while drifting forward as time passes. Zooming does not move the lens, so by default it changes the frame size instead.'
     :'The snake uses only what the tracker reads from the picture, the same as with a movie. Use this to check the tracker.';
-  $('trkOpts').hidden=you&&source==='rig';
 }
 $('fYou').addEventListener('click',()=>{opts.follow='you';syncFollow();});
 $('fTrk').addEventListener('click',()=>{opts.follow='tracker';syncFollow();});
-function setMode(sl){opts.slide=sl;$('mBend').setAttribute('aria-pressed',String(!sl));$('mSlide').setAttribute('aria-pressed',String(sl));}
-$('mBend').addEventListener('click',()=>setMode(false));
-$('mSlide').addEventListener('click',()=>setMode(true));
-$('bend').addEventListener('input',e=>{opts.bend=+e.target.value;$('bendOut').textContent=opts.bend.toFixed(1)+'×';});
+const cfgBox=$('cfg');
+function renderCfg(){
+  cfgBox.innerHTML='';
+  CFG.forEach(c=>{
+    const row=document.createElement('div'), lab=document.createElement('div'); lab.className='lab';
+    const id='cfg-'+c.k;
+    if(c.range){
+      lab.innerHTML='<label for="'+id+'">'+c.label+'</label><span>'+(+cfg[c.k]).toFixed(c.range[2]<0.1?2:1)+'×</span>';
+      const r=document.createElement('input'); r.type='range'; r.id=id; r.min=c.range[0]; r.max=c.range[1]; r.step=c.range[2]; r.value=cfg[c.k]; r.style.width='100%';
+      r.addEventListener('input',()=>{cfg[c.k]=+r.value; lab.querySelector('span').textContent=(+r.value).toFixed(c.range[2]<0.1?2:1)+'×'; saveCfg();});
+      row.append(lab,r);
+    }else{
+      lab.textContent=c.label;
+      const g=document.createElement('div'); g.className='seg'; g.setAttribute('role','group'); g.setAttribute('aria-label',c.label);
+      c.opts.forEach(([v,t])=>{const b=document.createElement('button'); b.textContent=t; b.setAttribute('aria-pressed',String(cfg[c.k]===v));
+        b.addEventListener('click',()=>{cfg[c.k]=v; saveCfg(); g.querySelectorAll('button').forEach((x,i)=>x.setAttribute('aria-pressed',String(c.opts[i][0]===v)));}); g.append(b);});
+      row.append(lab,g);
+    }
+    cfgBox.append(row);
+  });
+}
+renderCfg();
+$('resetCfg').addEventListener('click',()=>{CFG.forEach(c=>cfg[c.k]=c.def); saveCfg(); renderCfg();});
 
 const scrub=$('scrub'); let scrubbing=false;
 scrub.addEventListener('input',()=>{scrubbing=true;if(vid.duration)vid.currentTime=scrub.value/1000*vid.duration;});
@@ -766,7 +805,7 @@ function readout(now){
       ' · zoom '+sg(M.zoom*100,0)+'%/s</span>';
   }
   h+='<b>Tracker</b><span>pan '+deg(S.yaw)+' · tilt '+deg(S.pitch)+' · roll '+deg(S.roll)+' · push/zoom '+sg(S.zoom*100,0)+'%/s</span>';
-  h+='<b>Snake</b><span>speed '+(source==='rig'&&opts.follow==='you'?growth(Mrig):'×1.0')+' · frame size ×'+lensScale.toFixed(2)+(explore?' · fly speed ×'+flyMul.toFixed(2):'')+'</span>';
+  h+='<b>Snake</b><span>speed ×'+(lastSpeed/SPEED).toFixed(1)+' · frame size ×'+lensScale.toFixed(2)+(explore?' · fly speed ×'+flyMul.toFixed(2):'')+'</span>';
   h+='<b>Frame</b><span>'+(aspect*wF/hF).toFixed(2)+':1 · cuts '+cuts+(source==='rig'&&tour.on?' · tour: '+TOUR[tour.i].n:'')+(n>=CAP?' · snake full, reset it':'')+'</span>';
   read.innerHTML=h;
   if(source==='video'&&vid.duration){if(!scrubbing)scrub.value=Math.round(vid.currentTime/vid.duration*1000);$('time').textContent=fmt(vid.currentTime)+' / '+fmt(vid.duration);}
@@ -786,8 +825,8 @@ function loop(now){
       const cutSeen=analyze(rigCanvas,rig.time,fv.h,fv.v);
       const isCut=opts.follow==='you'?rig.justCut&&n>1:cutSeen;
       if(isCut) cuts++;
-      integrate(opts.follow==='you'?Mrig:trackerInput(fv.h,fv.v),rdt);
-      if(isCut){if(opts.follow!=='you')lensScale=1;pushRing();}
+      integrate(opts.follow==='you'?rigInput():trackerInput(fv.h,fv.v),rdt);
+      if(isCut){if(cfg.cutReset==='1')lensScale=1;pushRing();}
       rig.justCut=false;
     }
   }else if(vid.readyState>=2&&vid.currentTime!==lastT){
@@ -795,7 +834,7 @@ function loop(now){
     try{
       const cut=analyze(vid,vid.currentTime,hf,vf2);
       const dt=vid.currentTime-t0;
-      if(t0>=0&&dt>0&&dt<0.5){integrate(trackerInput(hf,vf2),dt);if(cut){cuts++;lensScale=1;pushRing();}}
+      if(t0>=0&&dt>0&&dt<0.5){integrate(trackerInput(hf,vf2),dt);if(cut){cuts++;if(cfg.cutReset==='1')lensScale=1;pushRing();}}
     }catch(err){showMsg("Couldn't read frames from this video.");}
   }
   flush();
