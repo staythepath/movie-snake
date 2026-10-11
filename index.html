@@ -24,6 +24,7 @@ body{background:var(--bg);color:var(--fg);font-family:var(--display);overflow:hi
 .title{position:absolute;left:16px;top:14px;right:16px;pointer-events:none;display:flex;flex-direction:column;gap:2px}
 .title h1{margin:0;font:700 18px/1.2 var(--display)}
 .title p{margin:0;font:400 13px/1.4 var(--display);color:var(--muted);max-width:46ch}
+#xhair{position:absolute;left:50%;top:50%;width:6px;height:6px;margin:-3px 0 0 -3px;border-radius:50%;background:var(--accent);pointer-events:none}
 #msg{position:absolute;left:16px;right:16px;bottom:12px;font:400 13px var(--display);color:var(--warn);text-align:center}
 .panel{background:var(--panel);border-left:1px solid var(--line);overflow-y:auto;padding-inline:16px;padding-block:14px calc(14px + env(safe-area-inset-bottom,0px));display:flex;flex-direction:column;gap:18px;min-width:0}
 section{display:flex;flex-direction:column;gap:8px}
@@ -71,6 +72,7 @@ input[type=range]{accent-color:var(--accent);flex:1;min-width:0}
       <p id="hint">Test rig. A tour is running; hold any move to take over.</p>
     </div>
     <div id="msg" hidden></div>
+    <div id="xhair" hidden></div>
   </div>
 
   <aside class="panel">
@@ -95,7 +97,7 @@ input[type=range]{accent-color:var(--accent);flex:1;min-width:0}
         <button id="explore">Explore snake</button>
         <button id="fit" hidden>Fit view</button>
       </div>
-      <p class="note" id="exploreNote" hidden>Drag to orbit. Right-drag or two fingers to pan. Scroll or pinch to zoom. W A S D to fly, R F to rise and sink. Fly inside the snake to see the frame from that moment.</p>
+      <p class="note" id="exploreNote" hidden>Click the view to look around with the mouse (Esc frees it). W A S D or arrows to move, Space or E to rise, C or Q to sink, Shift to go faster, scroll wheel to change speed. On a phone, drag to look and drag with two fingers to move. Fly inside the snake to see the frame from that moment.</p>
     </section>
 
     <section id="rigPanel">
@@ -147,7 +149,6 @@ input[type=range]{accent-color:var(--accent);flex:1;min-width:0}
 <video id="vid" playsinline preload="auto" hidden></video>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
 <script>
 (function(){
 const T=THREE, $=id=>document.getElementById(id);
@@ -162,7 +163,7 @@ ren.setPixelRatio(Math.min(2,window.devicePixelRatio||1));
 ren.outputEncoding=T.sRGBEncoding;
 stage.insertBefore(ren.domElement,stage.firstChild);
 const scene=new T.Scene(); scene.background=new T.Color(BG); scene.fog=new T.Fog(BG,4,60);
-const cam=new T.PerspectiveCamera(45,1,0.05,300); scene.add(cam);
+const cam=new T.PerspectiveCamera(45,1,0.05,1000); scene.add(cam);
 scene.add(new T.AmbientLight(0xffffff,0.62));
 const dl=new T.DirectionalLight(0xffffff,0.55); dl.position.set(0.6,1,0.4); cam.add(dl);
 
@@ -183,6 +184,7 @@ screen.rotation.y=Math.PI; screen.position.z=-0.004; head.add(screen);
 screen.add(new T.LineSegments(new T.EdgesGeometry(new T.PlaneGeometry(1,1)),new T.LineBasicMaterial({color:0x3a4150})));
 
 const SPEED=0.6, ZG=6, SEG=1/15;
+let lensScale=1;
 let P=new T.Vector3(), Q=new T.Quaternion(), n=0, dirty=-1, segT=0, cuts=0;
 const opts={slide:false,bend:1,follow:'you'};
 let aspect=16/9, wF=1, hF=1, D=3;
@@ -197,7 +199,7 @@ function pushRing(){
   ringC[n*3]=P.x; ringC[n*3+1]=P.y; ringC[n*3+2]=P.z;
   if(source==='video') ringT[n]=vid.currentTime;
   else{ringT[n]=rig.time; rigPose.set([rig.pos.x,rig.pos.y,rig.pos.z,rig.yaw,rig.pitch,rig.roll,rig.tanV,frameI,palI],n*9);}
-  const w=aspect*wF/2,h=hF/2, cs=[[w,-h],[-w,-h],[-w,h],[w,h]];
+  const w=aspect*wF/2*lensScale,h=hF/2*lensScale, cs=[[w,-h],[-w,-h],[-w,h],[w,h]];
   for(let k=0;k<4;k++){
     const o=n*12+k*3,x=cs[k][0],y=cs[k][1];
     pos[o]=P.x+vr.x*x+vu.x*y; pos[o+1]=P.y+vr.y*x+vu.y*y; pos[o+2]=P.z+vr.z*x+vu.z*y;
@@ -214,7 +216,7 @@ function flush(){
   dirty=-1;
 }
 function resetSnake(){
-  P.set(0,0,0); Q.identity(); n=0; dirty=-1; cuts=0; segT=0;
+  P.set(0,0,0); Q.identity(); lensScale=1; n=0; dirty=-1; cuts=0; segT=0;
   for(const k in S) S[k]=0; prevGray=null; lastT=-1;
   geo.setDrawRange(0,0); pushRing();
 }
@@ -227,6 +229,8 @@ function integrate(M,dt){
   tq.setFromAxisAngle(Y,M.yaw*k*dt); Q.multiply(tq);
   tq.setFromAxisAngle(X,M.pitch*k*dt); Q.multiply(tq);
   tq.setFromAxisAngle(Z,M.roll*dt); Q.multiply(tq); Q.normalize(); axes();
+  if(M.scale!==undefined) lensScale=Math.pow(M.scale,k);
+  else lensScale=Math.max(0.15,Math.min(12,lensScale*Math.exp(k*(M.zoom||0)*dt)));
   P.addScaledVector(vf,Math.max(0,SPEED+k*M.fwd)*dt).addScaledVector(vr,k*M.rx*dt).addScaledVector(vu,k*M.uy*dt);
   segT+=dt; while(segT>=SEG){pushRing();segT-=SEG;}
 }
@@ -345,9 +349,8 @@ function analyze(el,t,hfov,vfov){
   return cut;
 }
 function trackerInput(hfov,vfov){
-  const fwd=SPEED*ZG*S.zoom;
-  if(opts.slide) return {yaw:0,pitch:0,roll:S.roll,fwd,rx:-S.yaw/hfov*aspect*wF,uy:S.pitch/vfov*hF};
-  return {yaw:S.yaw,pitch:S.pitch,roll:S.roll,fwd,rx:0,uy:0};
+  if(opts.slide) return {yaw:0,pitch:0,roll:S.roll,fwd:0,zoom:S.zoom,rx:-S.yaw/hfov*aspect*wF,uy:S.pitch/vfov*hF};
+  return {yaw:S.yaw,pitch:S.pitch,roll:S.roll,fwd:0,zoom:S.zoom,rx:0,uy:0};
 }
 
 /* ---------- test rig: a small 3D world the virtual camera moves through ---------- */
@@ -387,7 +390,7 @@ const rc=new T.PerspectiveCamera(45,16/9,0.1,400); rc.rotation.order='YXZ';
 const rig={pos:new T.Vector3(),yaw:0,pitch:0,roll:0,tanV:Math.tan(22.5*D2R),prevPos:new T.Vector3(),prevTan:0,justCut:true,anchor:null,depth:10,time:0};
 const cv={pan:0,tilt:0,roll:0,dolly:0,zoom:0,truck:0,crane:0,dz:0};
 const BASE={pan:0.5,tilt:0.35,roll:0.35,dolly:1.6,zoom:0.45,truck:1.6,crane:1.0,dz:1.3};
-const Mrig={yaw:0,pitch:0,roll:0,fwd:0,rx:0,uy:0,dolly:0,truck:0,crane:0,zoom:0};
+const Mrig={yaw:0,pitch:0,roll:0,fwd:0,rx:0,uy:0,dolly:0,truck:0,crane:0,zoom:0,scale:1};
 const FRAMES=[{n:'16:9',x:0,y:0,w:RW,h:RH},{n:'2.39:1',x:0,y:46,w:RW,h:268},{n:'4:3',x:80,y:0,w:480,h:RH}];
 let frameI=0, speed=1;
 const ray=new T.Raycaster(), C0=new T.Vector2(0,0);
@@ -428,13 +431,13 @@ function rigUpdate(dt){
   rig.tanV=Math.max(Math.tan(4*D2R),Math.min(Math.tan(60*D2R),rig.tanV));
   rig.pos.y=Math.max(0.25,rig.pos.y);
   rigCamAxes();
-  if(rig.justCut){for(const k in Mrig)Mrig[k]=0;}
+  if(rig.justCut){for(const k in Mrig)Mrig[k]=0;Mrig.scale=Math.tan(22.5*D2R)/rig.tanV;}
   else{
     dv.copy(rig.pos).sub(rig.prevPos);
     Mrig.yaw=cv.pan; Mrig.pitch=cv.tilt; Mrig.roll=cv.roll;
     Mrig.dolly=dv.dot(rfw)/dt; Mrig.truck=dv.dot(rgt)/dt; Mrig.crane=dv.dot(rup)/dt;
     Mrig.zoom=Math.log(rig.prevTan/rig.tanV)/dt;
-    Mrig.fwd=METER*Mrig.dolly+SPEED*ZG*Mrig.zoom;
+    Mrig.fwd=METER*Mrig.dolly; Mrig.scale=Math.tan(22.5*D2R)/rig.tanV;
     Mrig.rx=METER*Mrig.truck; Mrig.uy=METER*Mrig.crane;
   }
 }
@@ -477,7 +480,7 @@ function layout(){
   ren.setSize(w,h,false); cam.aspect=w/h; cam.updateProjectionMatrix();
   const th=Math.tan(22.5*D2R);
   D=Math.max(1/(0.56*2*th),aspect/(0.76*2*th*cam.aspect));
-  scene.fog.near=D+1; scene.fog.far=D+45;
+  cam.far=1000; cam.updateProjectionMatrix();
 }
 window.addEventListener('resize',layout);
 const msg=$('msg'); function showMsg(t){msg.textContent=t;msg.hidden=!t;}
@@ -506,12 +509,14 @@ vid.addEventListener('error',()=>{if(vid.src)showMsg("This browser can't play th
 ['play','pause','ended'].forEach(ev=>vid.addEventListener(ev,syncPlay));
 
 /* ---------- controls ---------- */
-/* ---------- explore mode ---------- */
-let explore=false, tween=null, savedHint='';
-const controls=new T.OrbitControls(cam,ren.domElement);
-controls.enabled=false; controls.enableDamping=true; controls.dampingFactor=0.08; controls.screenSpacePanning=true;
-ren.domElement.style.touchAction='';
-const fly=new Set(), FLY={KeyW:'f',KeyS:'b',KeyA:'l',KeyD:'r',KeyR:'u',KeyF:'d'};
+/* ---------- explore mode: first-person fly camera ---------- */
+let explore=false, tween=null, savedHint='', flyMul=1, snakeR=10, dragging=false;
+const camE={yaw:0,pitch:0}, touches=new Map(), touchMove={x:0,y:0};
+const canvasEl=ren.domElement;
+const fly=new Set(), FLY={KeyW:'f',ArrowUp:'f',KeyS:'b',ArrowDown:'b',KeyA:'l',ArrowLeft:'l',KeyD:'r',ArrowRight:'r',Space:'u',KeyE:'u',KeyC:'d',KeyQ:'d',ShiftLeft:'fast',ShiftRight:'fast'};
+function applyLook(){cam.rotation.order='YXZ';cam.rotation.set(camE.pitch,camE.yaw,0);}
+function lookFromDir(d){camE.yaw=Math.atan2(-d.x,-d.z);camE.pitch=Math.asin(Math.max(-1,Math.min(1,d.y)));}
+function turn(dx,dy){camE.yaw-=dx*0.0022;camE.pitch=Math.max(-1.55,Math.min(1.55,camE.pitch-dy*0.0022));applyLook();tween=null;}
 function snakeBounds(){
   const b=new T.Box3(), v=new T.Vector3();
   for(let i=0;i<n*4;i++){v.fromArray(pos,i*3);b.expandByPoint(v);}
@@ -519,38 +524,60 @@ function snakeBounds(){
   const s=b.getBoundingSphere(new T.Sphere()); s.radius=Math.max(2,s.radius); return s;
 }
 function fitView(){
-  const s=snakeBounds(), dist=s.radius/Math.sin(cam.fov*D2R/2)*1.05;
+  const s=snakeBounds(), dist=s.radius/Math.sin(cam.fov*D2R/2)*1.05; snakeR=s.radius;
   const dir=cam.position.clone().sub(s.center); dir.y=Math.max(dir.y,0);
   if(dir.lengthSq()<1e-6) dir.set(1,0.5,1);
   dir.normalize().add(new T.Vector3(0,0.35,0)).normalize();
-  cam.far=Math.max(300,dist+s.radius*4); cam.updateProjectionMatrix();
-  controls.maxDistance=dist*6;
-  tween={t:0,dur:1.3,p0:cam.position.clone(),p1:s.center.clone().addScaledVector(dir,dist),c0:controls.enabled?controls.target.clone():P.clone(),c1:s.center.clone()};
+  cam.far=Math.max(1000,dist+s.radius*4); cam.updateProjectionMatrix();
+  let y1=Math.atan2(dir.x,dir.z); while(y1-camE.yaw>Math.PI)y1-=2*Math.PI; while(y1-camE.yaw<-Math.PI)y1+=2*Math.PI;
+  tween={t:0,dur:1.3,p0:cam.position.clone(),p1:s.center.clone().addScaledVector(dir,dist),y0:camE.yaw,y1,q0:camE.pitch,q1:Math.asin(-dir.y)};
 }
 function enterExplore(){
   if(explore) return;
   explore=true; held.clear();
+  if(document.activeElement&&document.activeElement.blur) document.activeElement.blur();
   if(source==='video'&&!vid.paused) vid.pause();
   if(source==='rig'){paused=true;}
   syncPlay();
-  cam.up.set(0,1,0);
+  cam.up.set(0,1,0); cam.getWorldDirection(look); lookFromDir(look); applyLook();
   scene.fog.near=1e5; scene.fog.far=2e5;
   fitView();
-  controls.enabled=true; ren.domElement.style.touchAction='none';
+  canvasEl.style.touchAction='none'; canvasEl.style.cursor='crosshair';
   $('explore').textContent='Back to playback'; $('fit').hidden=false; $('exploreNote').hidden=false;
   savedHint=$('hint').textContent; lastSlice=-1; restoreHint();
 }
 function exitExplore(){
   if(!explore) return;
-  explore=false; tween=null; fly.clear(); pane.visible=false; inside=-1;
-  controls.enabled=false; ren.domElement.style.touchAction='';
-  cam.far=300; cam.updateProjectionMatrix(); layout();
+  explore=false; tween=null; fly.clear(); touches.clear(); dragging=false; pane.visible=false; inside=-1;
+  if(document.pointerLockElement===canvasEl&&document.exitPointerLock) document.exitPointerLock();
+  canvasEl.style.touchAction=''; canvasEl.style.cursor='';
+  layout();
   $('explore').textContent='Explore snake'; $('fit').hidden=true; $('exploreNote').hidden=true;
   $('hint').textContent=savedHint;
 }
 $('explore').addEventListener('click',()=>{if(explore)toggle();else enterExplore();});
 $('fit').addEventListener('click',fitView);
 vid.addEventListener('ended',enterExplore);
+canvasEl.addEventListener('pointerdown',e=>{
+  if(!explore) return;
+  e.preventDefault(); tween=null;
+  if(e.pointerType==='mouse'){
+    dragging=true;
+    if(document.pointerLockElement!==canvasEl&&canvasEl.requestPointerLock){try{const r=canvasEl.requestPointerLock();if(r&&r.catch)r.catch(()=>{});}catch(_){}}
+  }else touches.set(e.pointerId,{x:e.clientX,y:e.clientY});
+  try{canvasEl.setPointerCapture(e.pointerId);}catch(_){}
+});
+canvasEl.addEventListener('pointermove',e=>{
+  if(!explore) return;
+  if(e.pointerType==='mouse'){if(document.pointerLockElement===canvasEl||dragging)turn(e.movementX||0,e.movementY||0);return;}
+  const t=touches.get(e.pointerId); if(!t) return;
+  const dx=e.clientX-t.x, dy=e.clientY-t.y; t.x=e.clientX; t.y=e.clientY;
+  if(touches.size===1) turn(dx*1.6,dy*1.6); else {touchMove.x+=dx/touches.size; touchMove.y+=dy/touches.size;}
+});
+const endPtr=e=>{if(e.pointerType==='mouse')dragging=false;else touches.delete(e.pointerId);};
+canvasEl.addEventListener('pointerup',endPtr); canvasEl.addEventListener('pointercancel',endPtr);
+canvasEl.addEventListener('wheel',e=>{if(!explore)return;e.preventDefault();flyMul=Math.max(0.05,Math.min(50,flyMul*(e.deltaY<0?1.2:1/1.2)));},{passive:false});
+document.addEventListener('pointerlockchange',()=>{$('xhair').hidden=document.pointerLockElement!==canvasEl;});
 /* ---------- slice view: the movie frame at your spot inside the snake ---------- */
 const paneMat=new T.MeshBasicMaterial({color:0xffffff,side:T.DoubleSide,toneMapped:false});
 const pane=new T.Mesh(new T.PlaneGeometry(1,1),paneMat); pane.visible=false; scene.add(pane);
@@ -618,23 +645,28 @@ function sliceStep(){
 }
 function restoreHint(){if(explore)$('hint').textContent='Exploring the snake. Fly inside it to see the frame from that moment.';}
 
-const fv1=new T.Vector3(), fv2=new T.Vector3();
+const fv1=new T.Vector3(), fv2=new T.Vector3(), mv=new T.Vector3();
 function exploreStep(dt){
   if(tween){
     tween.t+=dt; const k=Math.min(1,tween.t/tween.dur), e=k<.5?4*k*k*k:1-Math.pow(-2*k+2,3)/2;
-    cam.position.lerpVectors(tween.p0,tween.p1,e); controls.target.lerpVectors(tween.c0,tween.c1,e);
+    cam.position.lerpVectors(tween.p0,tween.p1,e);
+    camE.yaw=tween.y0+(tween.y1-tween.y0)*e; camE.pitch=tween.q0+(tween.q1-tween.q0)*e; applyLook();
     if(k>=1) tween=null;
   }
-  if(fly.size){
-    const sp=(inside>=0?1.2:Math.max(1,cam.position.distanceTo(controls.target))*0.35)*dt;
-    cam.getWorldDirection(fv1); fv2.crossVectors(fv1,cam.up).normalize();
-    const mv=new T.Vector3();
-    if(fly.has('f'))mv.add(fv1); if(fly.has('b'))mv.sub(fv1);
-    if(fly.has('r'))mv.add(fv2); if(fly.has('l'))mv.sub(fv2);
-    if(fly.has('u'))mv.add(cam.up); if(fly.has('d'))mv.sub(cam.up);
-    if(mv.lengthSq()){mv.normalize().multiplyScalar(sp);cam.position.add(mv);controls.target.add(mv);tween=null;}
+  let sp=Math.max(1.5,snakeR*0.12)*flyMul;
+  if(inside>=0) sp=Math.min(sp,1.5*flyMul);
+  if(fly.has('fast')) sp*=4;
+  cam.getWorldDirection(fv1); fv2.set(1,0,0).applyQuaternion(cam.quaternion);
+  mv.set(0,0,0);
+  if(fly.has('f'))mv.add(fv1); if(fly.has('b'))mv.sub(fv1);
+  if(fly.has('r'))mv.add(fv2); if(fly.has('l'))mv.sub(fv2);
+  if(fly.has('u'))mv.y+=1; if(fly.has('d'))mv.y-=1;
+  if(mv.lengthSq()){mv.normalize().multiplyScalar(sp*dt);cam.position.add(mv);tween=null;}
+  if(touchMove.x||touchMove.y){
+    const k=sp*0.01;
+    cam.position.addScaledVector(fv1,-touchMove.y*k).addScaledVector(fv2,touchMove.x*k);
+    touchMove.x=touchMove.y=0; tween=null;
   }
-  controls.update();
   sliceStep();
 }
 
@@ -679,13 +711,13 @@ const KEYS={ArrowLeft:'panL',ArrowRight:'panR',ArrowUp:'tiltU',ArrowDown:'tiltD'
 const typing=e=>e.target instanceof HTMLInputElement&&e.target.type!=='range';
 document.addEventListener('keydown',e=>{
   if(typing(e)||e.metaKey||e.ctrlKey||e.altKey) return;
-  if(e.code==='Space'&&!(e.target instanceof HTMLButtonElement)){e.preventDefault();toggle();return;}
-  if(e.code==='KeyM'&&source==='video'&&!e.repeat){setMuted(!vid.muted);return;}
   if(explore){
-    if(e.code==='Escape'){exitExplore();return;}
     const f=FLY[e.code]; if(f){e.preventDefault();fly.add(f);}
+    else if(e.code==='KeyM'&&source==='video'&&!e.repeat) setMuted(!vid.muted);
     return;
   }
+  if(e.code==='Space'&&!(e.target instanceof HTMLButtonElement)){e.preventDefault();toggle();return;}
+  if(e.code==='KeyM'&&source==='video'&&!e.repeat){setMuted(!vid.muted);return;}
   if(source!=='rig') return;
   const a=KEYS[e.code];
   if(a){e.preventDefault();if(!e.repeat){stopTour();held.add(a);}}
@@ -704,7 +736,7 @@ function syncFollow(){
   const you=opts.follow==='you';
   $('fYou').setAttribute('aria-pressed',String(you)); $('fTrk').setAttribute('aria-pressed',String(!you));
   $('followNote').textContent=you
-    ?'The snake copies the lens exactly, as if a flat rectangle were taped over it. It turns when the lens turns and moves when the lens moves, meter for meter, while drifting forward as time passes.'
+    ?'The snake copies the lens exactly, as if a flat rectangle were taped over it. It turns when the lens turns and moves when the lens moves, meter for meter, while drifting forward as time passes. Zooming doesn't move the lens, so it changes the frame's size instead.'
     :'The snake uses only what the tracker reads from the picture, the same as with a movie. Use this to check the tracker.';
   $('trkOpts').hidden=you&&source==='rig';
 }
@@ -731,9 +763,10 @@ function readout(now){
   if(source==='rig'){
     const M=Mrig;
     h+='<b>Lens</b><span>pan '+deg(M.yaw)+' · tilt '+deg(M.pitch)+' · roll '+deg(M.roll)+' · dolly '+ms(M.dolly)+' · truck '+ms(M.truck)+' · crane '+ms(M.crane)+
-      ' · zoom '+sg(M.zoom*100,0)+'%/s · growth '+growth(M)+'</span>';
+      ' · zoom '+sg(M.zoom*100,0)+'%/s</span>';
   }
-  h+='<b>Tracker</b><span>pan '+deg(S.yaw)+' · tilt '+deg(S.pitch)+' · roll '+deg(S.roll)+' · push '+sg(S.zoom*100,0)+'%/s · growth '+growth({fwd:SPEED*ZG*S.zoom})+'</span>';
+  h+='<b>Tracker</b><span>pan '+deg(S.yaw)+' · tilt '+deg(S.pitch)+' · roll '+deg(S.roll)+' · push/zoom '+sg(S.zoom*100,0)+'%/s</span>';
+  h+='<b>Snake</b><span>speed '+(source==='rig'&&opts.follow==='you'?growth(Mrig):'×1.0')+' · frame size ×'+lensScale.toFixed(2)+(explore?' · fly speed ×'+flyMul.toFixed(2):'')+'</span>';
   h+='<b>Frame</b><span>'+(aspect*wF/hF).toFixed(2)+':1 · cuts '+cuts+(source==='rig'&&tour.on?' · tour: '+TOUR[tour.i].n:'')+(n>=CAP?' · snake full, reset it':'')+'</span>';
   read.innerHTML=h;
   if(source==='video'&&vid.duration){if(!scrubbing)scrub.value=Math.round(vid.currentTime/vid.duration*1000);$('time').textContent=fmt(vid.currentTime)+' / '+fmt(vid.duration);}
@@ -754,7 +787,7 @@ function loop(now){
       const isCut=opts.follow==='you'?rig.justCut&&n>1:cutSeen;
       if(isCut) cuts++;
       integrate(opts.follow==='you'?Mrig:trackerInput(fv.h,fv.v),rdt);
-      if(isCut) pushRing();
+      if(isCut){if(opts.follow!=='you')lensScale=1;pushRing();}
       rig.justCut=false;
     }
   }else if(vid.readyState>=2&&vid.currentTime!==lastT){
@@ -762,14 +795,17 @@ function loop(now){
     try{
       const cut=analyze(vid,vid.currentTime,hf,vf2);
       const dt=vid.currentTime-t0;
-      if(t0>=0&&dt>0&&dt<0.5){integrate(trackerInput(hf,vf2),dt);if(cut){cuts++;pushRing();}}
+      if(t0>=0&&dt>0&&dt<0.5){integrate(trackerInput(hf,vf2),dt);if(cut){cuts++;lensScale=1;pushRing();}}
     }catch(err){showMsg("Couldn't read frames from this video.");}
   }
   flush();
   holds.forEach(b=>b.classList.toggle('on',source==='rig'&&!explore&&has(b.dataset.a)));
   axes(); head.position.copy(P); head.quaternion.copy(Q);
   if(explore) exploreStep(rdt);
-  else{cam.position.copy(P).addScaledVector(vf,D); cam.up.copy(vu); cam.lookAt(P);}
+  head.scale.setScalar(lensScale);
+  if(explore) {}
+  else{cam.position.copy(P).addScaledVector(vf,D*lensScale); cam.up.copy(vu); cam.lookAt(P);
+    scene.fog.near=(D+1)*lensScale; scene.fog.far=(D+45)*lensScale;}
   ren.render(scene,cam);
   readout(now);
   requestAnimationFrame(loop);
