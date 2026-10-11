@@ -8,7 +8,7 @@ Each frame of the movie is a rectangle the shape of the picture. As the movie pl
 
 Open `index.html` in a browser (or serve the folder with any static server). Everything runs locally; your movie never leaves your computer.
 
-- **Open movie** plays a video file (MP4/H.264 or WebM work best). The snake grows as it plays.
+- **Open movie** plays a video file with its sound (MP4/H.264 or WebM work best). The snake grows as it plays. Mute and volume sit under the timeline; M toggles mute.
 - **Test rig** is a small 3D world with a virtual camera you drive yourself. Hold the buttons or use the keys:
   - Pan ← →, tilt ↑ ↓, roll Q E, dolly W S, zoom Z X, truck A D, crane R F, dolly zoom V B, cut C.
   - **Snake follows → The lens** copies your exact moves. **Tracker** uses only what the picture shows, the same as with a movie.

@@ -44,6 +44,7 @@ button:hover,.file:hover{border-color:var(--line2)}
 .mv{font:500 14px var(--display);display:flex;flex-direction:column;line-height:1.15}
 .mv small{font:400 11px var(--mono);color:var(--muted)}
 .hold{height:40px;touch-action:none;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;padding:0 6px}
+#mute.off{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
 .hold.on{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
 input[type=range]{accent-color:var(--accent);flex:1;min-width:0}
 .time{font:400 12px var(--mono);color:var(--muted);font-variant-numeric:tabular-nums}
@@ -82,6 +83,11 @@ input[type=range]{accent-color:var(--accent);flex:1;min-width:0}
       <div class="row" id="scrubRow" hidden>
         <input type="range" id="scrub" min="0" max="1000" step="1" value="0" aria-label="Movie position">
         <span class="time" id="time">0:00</span>
+      </div>
+      <div class="row" id="soundRow" hidden>
+        <button id="mute" style="min-width:96px">Mute</button>
+        <input type="range" id="vol" min="0" max="1" step="0.05" value="1" aria-label="Volume">
+        <span class="time">M</span>
       </div>
       <div class="btn2">
         <button id="play">Pause</button>
@@ -463,7 +469,7 @@ function useRig(){
   source='rig'; if(!vid.paused) vid.pause(); paused=false;
   screenMat.map=rigTex; screenMat.needsUpdate=true; aspect=16/9; screen.scale.set(aspect,1,1);
   sizeAnalysis(); layout(); resetSnake(); rig.justCut=true;
-  $('rigPanel').hidden=false; $('scrubRow').hidden=true; showMsg(''); syncFollow(); syncPlay();
+  $('rigPanel').hidden=false; $('scrubRow').hidden=true; $('soundRow').hidden=true; showMsg(''); syncFollow(); syncPlay();
   $('hint').textContent=tour.on?'Test rig. A tour is running; hold any move to take over.':'Test rig. Hold a move to drive the camera.';
 }
 function layout(){
@@ -491,9 +497,10 @@ vid.addEventListener('loadedmetadata',()=>{
   vtex=new T.VideoTexture(vid); vtex.encoding=T.sRGBEncoding;
   screenMat.map=vtex; screenMat.needsUpdate=true; screen.scale.set(aspect,1,1);
   sizeAnalysis(); layout(); resetSnake(); ensureSeekVid();
-  $('rigPanel').hidden=true; $('scrubRow').hidden=false; $('trkOpts').hidden=false;
+  $('rigPanel').hidden=true; $('scrubRow').hidden=false; $('soundRow').hidden=false; $('trkOpts').hidden=false;
   $('hint').textContent=fileName;
-  vid.play().then(syncPlay).catch(syncPlay);
+  vid.muted=false; autoMuted=false;
+  vid.play().catch(()=>{vid.muted=true;autoMuted=true;return vid.play();}).then(()=>{syncPlay();syncSound();}).catch(()=>{syncPlay();syncSound();});
 });
 vid.addEventListener('error',()=>{if(vid.src)showMsg("This browser can't play that file. Try an MP4 (H.264) or WebM file.");});
 ['play','pause','ended'].forEach(ev=>vid.addEventListener(ev,syncPlay));
@@ -631,10 +638,25 @@ function exploreStep(dt){
   sliceStep();
 }
 
+/* ---------- sound ---------- */
+let autoMuted=false;
+const muteBtn=$('mute');
+function syncSound(){
+  muteBtn.textContent=vid.muted?'Unmute':'Mute';
+  muteBtn.classList.toggle('off',vid.muted);
+  if(source==='video'&&autoMuted&&vid.muted) showMsg('Your browser started the movie muted. Click Unmute or press M for sound.');
+  else if(msg.textContent.startsWith('Your browser started')) showMsg('');
+}
+function setMuted(m){vid.muted=m;autoMuted=false;syncSound();}
+muteBtn.addEventListener('click',()=>setMuted(!vid.muted));
+$('vol').addEventListener('input',e=>{vid.volume=+e.target.value;if(vid.muted&&vid.volume>0)setMuted(false);});
+vid.addEventListener('volumechange',syncSound);
+
 const playBtn=$('play');
 function isPlaying(){return !explore&&(source==='rig'?!paused:!vid.paused);}
 function syncPlay(){playBtn.textContent=isPlaying()?'Pause':'Play';}
 function toggle(){
+  if(source==='video'&&autoMuted) setMuted(false);
   if(explore){exitExplore(); if(source==='rig')paused=false; else if(!vid.ended)vid.play().catch(()=>{}); syncPlay(); return;}
   if(source==='rig')paused=!paused;else if(vid.paused)vid.play().catch(()=>{});else vid.pause();syncPlay();
 }
@@ -658,6 +680,7 @@ const typing=e=>e.target instanceof HTMLInputElement&&e.target.type!=='range';
 document.addEventListener('keydown',e=>{
   if(typing(e)||e.metaKey||e.ctrlKey||e.altKey) return;
   if(e.code==='Space'&&!(e.target instanceof HTMLButtonElement)){e.preventDefault();toggle();return;}
+  if(e.code==='KeyM'&&source==='video'&&!e.repeat){setMuted(!vid.muted);return;}
   if(explore){
     if(e.code==='Escape'){exitExplore();return;}
     const f=FLY[e.code]; if(f){e.preventDefault();fly.add(f);}
