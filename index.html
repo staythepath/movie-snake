@@ -1,0 +1,760 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Camera Snake</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@500;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+body{margin:0}
+/* Layout: a dark screening room. The 3D stage fills the screen; a camera-operator console sits to the right (below on phones). */
+:root{
+  --bg:#0b0d12; --panel:#11141b; --line:#272c38; --line2:#3a4150; --fg:#ebe7de; --muted:#8d919b; --accent:#e2b866; --accent-ink:#1d1608; --warn:#f0a58f;
+  --display:'Bricolage Grotesque',system-ui,-apple-system,'Segoe UI',sans-serif;
+  --mono:'IBM Plex Mono',ui-monospace,SFMono-Regular,Menlo,monospace;
+  color-scheme:dark;
+}
+[hidden]{display:none!important}
+html,body{height:100%}
+body{background:var(--bg);color:var(--fg);font-family:var(--display);overflow:hidden}
+.app{height:100%;display:grid;grid-template-columns:minmax(0,1fr) 340px}
+#stage{position:relative;min-height:0;background:var(--bg)}
+#stage canvas{display:block;width:100%;height:100%}
+.title{position:absolute;left:16px;top:14px;right:16px;pointer-events:none;display:flex;flex-direction:column;gap:2px}
+.title h1{margin:0;font:700 18px/1.2 var(--display)}
+.title p{margin:0;font:400 13px/1.4 var(--display);color:var(--muted);max-width:46ch}
+#msg{position:absolute;left:16px;right:16px;bottom:12px;font:400 13px var(--display);color:var(--warn);text-align:center}
+.panel{background:var(--panel);border-left:1px solid var(--line);overflow-y:auto;padding-inline:16px;padding-block:14px calc(14px + env(safe-area-inset-bottom,0px));display:flex;flex-direction:column;gap:18px;min-width:0}
+section{display:flex;flex-direction:column;gap:8px}
+.h{font:500 12px var(--display);color:var(--muted);letter-spacing:.06em;text-transform:uppercase;display:flex;justify-content:space-between;gap:8px}
+.h span{text-transform:none;letter-spacing:0}
+.note{margin:0;font:400 13px/1.45 var(--display);color:var(--muted)}
+.row{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+button,.file{font:500 14px var(--display);color:var(--fg);background:transparent;border:1px solid var(--line);border-radius:6px;min-height:36px;padding:0 12px;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;gap:6px}
+button:hover,.file:hover{border-color:var(--line2)}
+.file{position:relative}
+.file input{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}
+.file:focus-within{outline:2px solid var(--accent);outline-offset:2px}
+.seg{display:grid;grid-auto-flow:column;grid-auto-columns:1fr;border:1px solid var(--line);border-radius:6px;overflow:hidden}
+.seg button{border:0;border-radius:0}
+.seg button[aria-pressed="true"]{background:var(--line);color:var(--fg)}
+.seg button[aria-pressed="false"]{color:var(--muted)}
+.pad{display:grid;grid-template-columns:78px 1fr 1fr;gap:6px;align-items:center}
+.mv{font:500 14px var(--display);display:flex;flex-direction:column;line-height:1.15}
+.mv small{font:400 11px var(--mono);color:var(--muted)}
+.hold{height:40px;touch-action:none;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;padding:0 6px}
+.hold.on{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+input[type=range]{accent-color:var(--accent);flex:1;min-width:0}
+.time{font:400 12px var(--mono);color:var(--muted);font-variant-numeric:tabular-nums}
+.read{font:400 12px/1.6 var(--mono);color:var(--muted);font-variant-numeric:tabular-nums;display:grid;grid-template-columns:auto minmax(0,1fr);column-gap:10px}
+.read b{font-weight:500;color:var(--fg)}
+.read span{overflow-wrap:anywhere}
+.btn2{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+@media (max-width:820px){
+  html,body{height:auto}
+  body{overflow:auto}
+  .app{display:flex;flex-direction:column;height:auto}
+  #stage{height:56vh;min-height:280px}
+  .panel{border-left:0;border-top:1px solid var(--line);overflow:visible}
+}
+</style>
+
+</head>
+<body>
+<div class="app">
+  <div id="stage">
+    <div class="title">
+      <h1>Camera Snake</h1>
+      <p id="hint">Test rig. A tour is running; hold any move to take over.</p>
+    </div>
+    <div id="msg" hidden></div>
+  </div>
+
+  <aside class="panel">
+    <section>
+      <div class="h">Source</div>
+      <div class="btn2">
+        <button id="srcRig">Test rig</button>
+        <label class="file"><input type="file" id="file" accept="video/*">Open movie</label>
+      </div>
+      <div class="row" id="scrubRow" hidden>
+        <input type="range" id="scrub" min="0" max="1000" step="1" value="0" aria-label="Movie position">
+        <span class="time" id="time">0:00</span>
+      </div>
+      <div class="btn2">
+        <button id="play">Pause</button>
+        <button id="reset">Reset snake</button>
+        <button id="explore">Explore snake</button>
+        <button id="fit" hidden>Fit view</button>
+      </div>
+      <p class="note" id="exploreNote" hidden>Drag to orbit. Right-drag or two fingers to pan. Scroll or pinch to zoom. W A S D to fly, R F to rise and sink. Fly inside the snake to see the frame from that moment.</p>
+    </section>
+
+    <section id="rigPanel">
+      <div class="h">Snake follows</div>
+      <div class="seg" role="group" aria-label="Snake follows">
+        <button id="fYou" aria-pressed="true">The lens</button>
+        <button id="fTrk" aria-pressed="false">Tracker</button>
+      </div>
+      <p class="note" id="followNote"></p>
+
+      <div class="h">Camera moves <span>hold to move</span></div>
+      <div class="pad">
+        <span class="mv">Pan<small>← →</small></span><button class="hold" data-a="panL">Left</button><button class="hold" data-a="panR">Right</button>
+        <span class="mv">Tilt<small>↑ ↓</small></span><button class="hold" data-a="tiltU">Up</button><button class="hold" data-a="tiltD">Down</button>
+        <span class="mv">Roll<small>Q E</small></span><button class="hold" data-a="rollL">Left</button><button class="hold" data-a="rollR">Right</button>
+        <span class="mv">Dolly<small>W S</small></span><button class="hold" data-a="in">Push in</button><button class="hold" data-a="out">Pull out</button>
+        <span class="mv">Zoom<small>Z X</small></span><button class="hold" data-a="zin">In</button><button class="hold" data-a="zout">Out</button>
+        <span class="mv">Truck<small>A D</small></span><button class="hold" data-a="trL">Left</button><button class="hold" data-a="trR">Right</button>
+        <span class="mv">Crane<small>R F</small></span><button class="hold" data-a="crU">Up</button><button class="hold" data-a="crD">Down</button>
+        <span class="mv">Dolly zoom<small>V B</small></span><button class="hold" data-a="dzIn">In</button><button class="hold" data-a="dzOut">Out</button>
+      </div>
+      <div class="row"><label class="h" for="speed" style="min-width:78px">Speed</label><input type="range" id="speed" min="0.25" max="3" step="0.25" value="1"><span class="time" id="speedOut">1×</span></div>
+      <div class="btn2">
+        <button id="cut">Cut <span class="time">C</span></button>
+        <button id="frame">Frame 16:9</button>
+        <button id="camReset">Reset camera</button>
+        <button id="tour">Run tour</button>
+      </div>
+    </section>
+
+    <section>
+      <div class="h">Snake shape</div>
+      <div id="trkOpts">
+        <p class="note" style="margin-bottom:8px">From the picture alone, a pan and a sideways slide look the same. Choose how the tracker draws them.</p>
+        <div class="seg" role="group" aria-label="Tracker sideways motion">
+          <button id="mBend" aria-pressed="true">Bend</button>
+          <button id="mSlide" aria-pressed="false">Slide</button>
+        </div>
+      </div>
+      <div class="row"><label class="h" for="bend" style="min-width:78px">Strength</label><input type="range" id="bend" min="0" max="3" step="0.1" value="1"><span class="time" id="bendOut">1.0×</span></div>
+    </section>
+
+    <section>
+      <div class="h">Readout</div>
+      <div class="read" id="read"></div>
+    </section>
+  </aside>
+</div>
+<video id="vid" playsinline preload="auto" hidden></video>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+<script>
+(function(){
+const T=THREE, $=id=>document.getElementById(id);
+const stage=$('stage'), vid=$('vid');
+const BG=0x0b0d12, D2R=Math.PI/180;
+const X=new T.Vector3(1,0,0),Y=new T.Vector3(0,1,0),Z=new T.Vector3(0,0,-1);
+let seed=11; const rnd=()=>(seed=(seed*16807)%2147483647)/2147483647;
+
+/* ---------- main view ---------- */
+const ren=new T.WebGLRenderer({antialias:true});
+ren.setPixelRatio(Math.min(2,window.devicePixelRatio||1));
+ren.outputEncoding=T.sRGBEncoding;
+stage.insertBefore(ren.domElement,stage.firstChild);
+const scene=new T.Scene(); scene.background=new T.Color(BG); scene.fog=new T.Fog(BG,4,60);
+const cam=new T.PerspectiveCamera(45,1,0.05,300); scene.add(cam);
+scene.add(new T.AmbientLight(0xffffff,0.62));
+const dl=new T.DirectionalLight(0xffffff,0.55); dl.position.set(0.6,1,0.4); cam.add(dl);
+
+/* ---------- snake mesh ---------- */
+const CAP=150000;
+const pos=new Float32Array(CAP*12), col=new Float32Array(CAP*12), ind=new Uint32Array((CAP-1)*24);
+for(let i=0,o=0;i<CAP-1;i++)for(let k=0;k<4;k++){const a=i*4+k,b=i*4+(k+1)%4,c=a+4,d=b+4;ind[o++]=a;ind[o++]=c;ind[o++]=b;ind[o++]=b;ind[o++]=c;ind[o++]=d;}
+const geo=new T.BufferGeometry();
+const pa=new T.BufferAttribute(pos,3).setUsage(T.DynamicDrawUsage), ca=new T.BufferAttribute(col,3).setUsage(T.DynamicDrawUsage);
+geo.setAttribute('position',pa); geo.setAttribute('color',ca); geo.setIndex(new T.BufferAttribute(ind,1)); geo.setDrawRange(0,0);
+const snake=new T.Mesh(geo,new T.MeshPhongMaterial({vertexColors:true,flatShading:true,side:T.DoubleSide,shininess:0}));
+snake.frustumCulled=false; scene.add(snake);
+
+const head=new T.Group(); scene.add(head);
+const screenMat=new T.MeshBasicMaterial({color:0xffffff,toneMapped:false});
+const screen=new T.Mesh(new T.PlaneGeometry(1,1),screenMat);
+screen.rotation.y=Math.PI; screen.position.z=-0.004; head.add(screen);
+screen.add(new T.LineSegments(new T.EdgesGeometry(new T.PlaneGeometry(1,1)),new T.LineBasicMaterial({color:0x3a4150})));
+
+const SPEED=0.6, ZG=6, SEG=1/15;
+let P=new T.Vector3(), Q=new T.Quaternion(), n=0, dirty=-1, segT=0, cuts=0;
+const opts={slide:false,bend:1,follow:'you'};
+let aspect=16/9, wF=1, hF=1, D=3;
+let quad=[[.2,.2,.2],[.2,.2,.2],[.2,.2,.2],[.2,.2,.2]];
+const tq=new T.Quaternion(), vr=new T.Vector3(), vu=new T.Vector3(), vf=new T.Vector3(), tc=new T.Color();
+function axes(){vr.copy(X).applyQuaternion(Q);vu.copy(Y).applyQuaternion(Q);vf.copy(Z).applyQuaternion(Q);}
+
+const ringT=new Float32Array(CAP), ringC=new Float32Array(CAP*3), rigPose=new Float32Array(CAP*9);
+function pushRing(){
+  if(n>=CAP) return;
+  axes();
+  ringC[n*3]=P.x; ringC[n*3+1]=P.y; ringC[n*3+2]=P.z;
+  if(source==='video') ringT[n]=vid.currentTime;
+  else{ringT[n]=rig.time; rigPose.set([rig.pos.x,rig.pos.y,rig.pos.z,rig.yaw,rig.pitch,rig.roll,rig.tanV,frameI,palI],n*9);}
+  const w=aspect*wF/2,h=hF/2, cs=[[w,-h],[-w,-h],[-w,h],[w,h]];
+  for(let k=0;k<4;k++){
+    const o=n*12+k*3,x=cs[k][0],y=cs[k][1];
+    pos[o]=P.x+vr.x*x+vu.x*y; pos[o+1]=P.y+vr.y*x+vu.y*y; pos[o+2]=P.z+vr.z*x+vu.z*y;
+    col[o]=quad[k][0]; col[o+1]=quad[k][1]; col[o+2]=quad[k][2];
+  }
+  if(dirty<0) dirty=n;
+  n++; geo.setDrawRange(0,Math.max(0,n-1)*24);
+}
+function flush(){
+  if(dirty<0) return;
+  const off=dirty*12, cnt=(n-dirty)*12;
+  pa.updateRange.offset=off; pa.updateRange.count=cnt; pa.needsUpdate=true;
+  ca.updateRange.offset=off; ca.updateRange.count=cnt; ca.needsUpdate=true;
+  dirty=-1;
+}
+function resetSnake(){
+  P.set(0,0,0); Q.identity(); n=0; dirty=-1; cuts=0; segT=0;
+  for(const k in S) S[k]=0; prevGray=null; lastT=-1;
+  geo.setDrawRange(0,0); pushRing();
+}
+
+/* M = how the lens rectangle moves: yaw/pitch/roll in rad/s; fwd/rx/uy in snake units per second along the lens's own forward/right/up.
+   The snake always drifts forward at SPEED (time passing); lens moves add to that. */
+const METER=0.5;
+function integrate(M,dt){
+  const k=opts.bend;
+  tq.setFromAxisAngle(Y,M.yaw*k*dt); Q.multiply(tq);
+  tq.setFromAxisAngle(X,M.pitch*k*dt); Q.multiply(tq);
+  tq.setFromAxisAngle(Z,M.roll*dt); Q.multiply(tq); Q.normalize(); axes();
+  P.addScaledVector(vf,Math.max(0,SPEED+k*M.fwd)*dt).addScaledVector(vr,k*M.rx*dt).addScaledVector(vu,k*M.uy*dt);
+  segT+=dt; while(segT>=SEG){pushRing();segT-=SEG;}
+}
+const growth=M=>'×'+(Math.max(0,SPEED+opts.bend*M.fwd)/SPEED).toFixed(1);
+
+/* ---------- picture analysis (the tracker) ---------- */
+const AW=160; let AH=90;
+const ac=document.createElement('canvas'); const ax=ac.getContext('2d',{willReadFrequently:true});
+let prevGray=null, prevHist=null, lastT=-1;
+const S={yaw:0,pitch:0,roll:0,zoom:0};
+const reg={t:0,b:0,l:0,r:0}; let pendH={v:1,c:0}, pendW={v:1,c:0};
+function sizeAnalysis(){AH=Math.max(40,Math.min(160,Math.round(AW/aspect)));ac.width=AW;ac.height=AH;prevGray=null;reg.t=reg.b=reg.l=reg.r=0;wF=hF=1;pendH={v:1,c:0};pendW={v:1,c:0};}
+
+function sample(el){
+  ax.drawImage(el,0,0,AW,AH);
+  const d=ax.getImageData(0,0,AW,AH).data, g=new Uint8Array(AW*AH), hist=new Float32Array(16), qs=new Float32Array(16);
+  const hx=AW/2, hy=AH/2;
+  for(let y=0;y<AH;y++)for(let x=0;x<AW;x++){
+    const i=y*AW+x,p=i*4,r=d[p],gg=d[p+1],b=d[p+2],l=(r*77+gg*150+b*29)>>8;
+    g[i]=l; hist[l>>4]++;
+    if(y<reg.t||y>=AH-reg.b||x<reg.l||x>=AW-reg.r) continue;
+    const q=y<hy?(x<hx?3:2):(x<hx?0:1), o=q*4;
+    qs[o]+=r;qs[o+1]+=gg;qs[o+2]+=b;qs[o+3]++;
+  }
+  for(let k=0;k<16;k++) hist[k]/=AW*AH;
+  return {g,hist,qs};
+}
+function detectBars(g){
+  const rowDark=y=>{let s=0,m=0;for(let x=0;x<AW;x++){const v=g[y*AW+x];s+=v;if(v>m)m=v;}return s/AW<16&&m<48;};
+  let t=0,b=0; while(t<AH/2&&rowDark(t))t++; while(b<AH/2&&rowDark(AH-1-b))b++;
+  const colDark=x=>{let s=0,m=0,c=0;for(let y=t;y<AH-b;y++){const v=g[y*AW+x];s+=v;c++;if(v>m)m=v;}return c>0&&s/c<16&&m<48;};
+  let l=0,r=0; while(l<AW/2&&colDark(l))l++; while(r<AW/2&&colDark(AW-1-r))r++;
+  if(t+b>AH*0.7||l+r>AW*0.7) return;
+  if(Math.abs(t-b)<=3) step(pendH,hF,(AH-t-b)/AH,v=>{hF=v;reg.t=t;reg.b=b;});
+  if(Math.abs(l-r)<=3) step(pendW,wF,(AW-l-r)/AW,v=>{wF=v;reg.l=l;reg.r=r;});
+}
+function step(p,cur,v,apply){
+  if(Math.abs(v-cur)<0.03){p.c=0;return;}
+  if(Math.abs(v-p.v)<0.03)p.c++; else{p.v=v;p.c=1;}
+  if(p.c>=10){apply(v);p.c=0;}
+}
+function motion(pv,cu){
+  const B=12,R=6,M=R+1;
+  const x0=reg.l+M,x1=AW-reg.r-M-B,y0=reg.t+M,y1=AH-reg.b-M-B;
+  if(x1<=x0||y1<=y0) return null;
+  const full=(bx,by,dx,dy)=>{let a=0;for(let yy=0;yy<B;yy++){const r1=(by+yy)*AW+bx,r2=(by+yy+dy)*AW+bx+dx;for(let xx=0;xx<B;xx++){const t=pv[r1+xx]-cu[r2+xx];a+=t<0?-t:t;}}return a;};
+  const pts=[], nx=9, ny=5;
+  for(let j=0;j<ny;j++)for(let i=0;i<nx;i++){
+    const bx=Math.round(x0+(x1-x0)*i/(nx-1)), by=Math.round(y0+(y1-y0)*j/(ny-1));
+    let s=0,s2=0;
+    for(let yy=0;yy<B;yy++)for(let xx=0;xx<B;xx++){const v=pv[(by+yy)*AW+bx+xx];s+=v;s2+=v*v;}
+    const mean=s/144; if(s2/144-mean*mean<30) continue;
+    let best=1e9,bdx=0,bdy=0;
+    for(let dy=-R;dy<=R;dy++)for(let dx=-R;dx<=R;dx++){
+      let a=0;
+      for(let yy=0;yy<B&&a<best;yy++){const r1=(by+yy)*AW+bx,r2=(by+yy+dy)*AW+bx+dx;for(let xx=0;xx<B;xx++){const t=pv[r1+xx]-cu[r2+xx];a+=t<0?-t:t;}}
+      if(a<best){best=a;bdx=dx;bdy=dy;}
+    }
+    if(Math.abs(bdx)===R||Math.abs(bdy)===R||best/144>18) continue;
+    const c=best,l=full(bx,by,bdx-1,bdy),r=full(bx,by,bdx+1,bdy),u=full(bx,by,bdx,bdy-1),d=full(bx,by,bdx,bdy+1);
+    const d1=l-2*c+r,d2=u-2*c+d;
+    if(d1<60||d2<60) continue;
+    const sx=Math.max(-.5,Math.min(.5,(l-r)/(2*d1))), sy=Math.max(-.5,Math.min(.5,(u-d)/(2*d2)));
+    pts.push({x:bx+B/2-AW/2,y:by+B/2-AH/2,dx:bdx+sx,dy:bdy+sy});
+  }
+  return fit(pts);
+}
+function solve4(A,b){
+  const m=A.map((r,i)=>r.concat([b[i]]));
+  for(let c=0;c<4;c++){
+    let p=c;for(let r=c+1;r<4;r++)if(Math.abs(m[r][c])>Math.abs(m[p][c]))p=r;
+    if(Math.abs(m[p][c])<1e-9)return null;
+    [m[c],m[p]]=[m[p],m[c]];
+    for(let r=0;r<4;r++)if(r!==c){const f=m[r][c]/m[c][c];for(let k=c;k<5;k++)m[r][k]-=f*m[c][k];}
+  }
+  return m.map((r,i)=>r[4]/r[i]);
+}
+function fit(pts){
+  if(pts.length<8) return null;
+  let use=pts,p=null;
+  for(let it=0;it<3;it++){
+    const A=[[0,0,0,0],[0,0,0,0],[0,0,0,0],[0,0,0,0]],bv=[0,0,0,0];
+    for(const q of use){
+      const rows=[[[1,0,q.x,-q.y],q.dx],[[0,1,q.y,q.x],q.dy]];
+      for(const [r,v] of rows)for(let i=0;i<4;i++){bv[i]+=r[i]*v;for(let j=0;j<4;j++)A[i][j]+=r[i]*r[j];}
+    }
+    p=solve4(A,bv); if(!p) return null;
+    const res=pts.map(q=>Math.hypot(q.dx-(p[0]+p[2]*q.x-p[3]*q.y),q.dy-(p[1]+p[2]*q.y+p[3]*q.x)));
+    const sorted=res.slice().sort((a,b)=>a-b), med=sorted[sorted.length>>1];
+    const keep=pts.filter((q,i)=>res[i]<Math.max(0.6,2.5*med));
+    if(keep.length<8) break;
+    use=keep;
+  }
+  return {tx:p[0],ty:p[1],a:p[2],b:p[3]};
+}
+/* updates S from the picture; returns true on a detected cut */
+function analyze(el,t,hfov,vfov){
+  const dt=t-lastT, sm=sample(el); let cut=false;
+  if(prevGray&&lastT>=0&&dt>0&&dt<0.5){
+    let hd=0; for(let k=0;k<16;k++) hd+=Math.abs(sm.hist[k]-prevHist[k]);
+    const al=1-Math.exp(-dt/0.15);
+    if(hd>0.5){cut=true; for(const k in S) S[k]=0;}
+    else{
+      const m=motion(prevGray,sm.g);
+      if(m){
+        const tx=Math.abs(m.tx)<0.08?0:m.tx, ty=Math.abs(m.ty)<0.08?0:m.ty;
+        const a=Math.abs(m.a)<0.0015?0:m.a, b=Math.abs(m.b)<0.0015?0:m.b;
+        const tg={yaw:(tx/AW)*hfov/dt,pitch:(ty/AH)*vfov/dt,roll:-b/dt,zoom:a/dt};
+        for(const k in S) S[k]+=(tg[k]-S[k])*al;
+      }else for(const k in S) S[k]*=1-al;
+    }
+  }
+  detectBars(sm.g);
+  for(let q=0;q<4;q++){const o=q*4,c=sm.qs[o+3];if(c>0){tc.setRGB(.06+.94*sm.qs[o]/c/255,.06+.94*sm.qs[o+1]/c/255,.06+.94*sm.qs[o+2]/c/255).convertSRGBToLinear();quad[q]=[tc.r,tc.g,tc.b];}}
+  prevGray=sm.g; prevHist=sm.hist; lastT=t;
+  return cut;
+}
+function trackerInput(hfov,vfov){
+  const fwd=SPEED*ZG*S.zoom;
+  if(opts.slide) return {yaw:0,pitch:0,roll:S.roll,fwd,rx:-S.yaw/hfov*aspect*wF,uy:S.pitch/vfov*hF};
+  return {yaw:S.yaw,pitch:S.pitch,roll:S.roll,fwd,rx:0,uy:0};
+}
+
+/* ---------- test rig: a small 3D world the virtual camera moves through ---------- */
+const RW=640,RH=360;
+const rr=new T.WebGLRenderer({antialias:true,preserveDrawingBuffer:true});
+rr.setPixelRatio(1); rr.setSize(RW,RH,false); rr.outputEncoding=T.sRGBEncoding; rr.autoClear=true;
+const rigCanvas=rr.domElement;
+const world=new T.Scene(); world.background=new T.Color(); world.fog=new T.Fog(0xffffff,30,140);
+const hemi=new T.HemisphereLight(0xffffff,0x444444,0.75); world.add(hemi);
+const sun=new T.DirectionalLight(0xffffff,0.7); sun.position.set(30,50,20); world.add(sun);
+
+function noiseTex(size,fn){const c=document.createElement('canvas');c.width=c.height=size;const x=c.getContext('2d');const im=x.createImageData(size,size);
+  for(let i=0;i<size*size;i++){const v=fn(i%size,(i/size)|0);im.data[i*4]=im.data[i*4+1]=im.data[i*4+2]=v;im.data[i*4+3]=255;}
+  x.putImageData(im,0,0);const t=new T.CanvasTexture(c);t.wrapS=t.wrapT=T.RepeatWrapping;t.encoding=T.sRGBEncoding;t.anisotropy=4;return t;}
+const speck=noiseTex(64,()=>150+rnd()*105);
+const groundTex=noiseTex(256,(x,y)=>(((x>>5)+(y>>5))&1?205:150)+rnd()*50); groundTex.repeat.set(40,40);
+const groundMat=new T.MeshLambertMaterial({map:groundTex});
+const ground=new T.Mesh(new T.PlaneGeometry(400,400),groundMat); ground.rotation.x=-Math.PI/2; world.add(ground);
+const boxMats=[0,1,2,3,4].map(()=>new T.MeshLambertMaterial({map:speck}));
+const subjMat=new T.MeshLambertMaterial({map:speck});
+const solids=[ground];
+function addBox(x,z,w,h,d,mat){const m=new T.Mesh(new T.BoxGeometry(w,h,d),mat);m.position.set(x,h/2,z);m.rotation.y=rnd()*Math.PI;world.add(m);solids.push(m);}
+for(let i=0;i<110;i++){const a=rnd()*6.283,r=16+rnd()*60;addBox(Math.sin(a)*r,Math.cos(a)*r,1+rnd()*4,1+rnd()*10,1+rnd()*4,boxMats[(rnd()*5)|0]);}
+for(let i=0;i<36;i++){const a=i/36*6.283+rnd()*.1,r=95+rnd()*15;addBox(Math.sin(a)*r,Math.cos(a)*r,10+rnd()*12,8+rnd()*22,10,boxMats[(rnd()*5)|0]);}
+for(let i=0;i<7;i++){const a=i/7*6.283+.45,r=2.6+rnd()*2.4;addBox(Math.sin(a)*r,Math.cos(a)*r,.5+rnd()*.5,.5+rnd()*1.4,.5+rnd()*.5,boxMats[i%5]);}
+{const body=new T.Mesh(new T.CylinderGeometry(.35,.4,1.4,14),subjMat);body.position.y=.7;const hd=new T.Mesh(new T.SphereGeometry(.3,16,12),subjMat);hd.position.y=1.68;world.add(body,hd);solids.push(body,hd);}
+const palettes=[
+  {sky:'#9fc4dc',ground:'#c9b98f',subj:'#d9483b',c:['#f2c14e','#f78154','#4d9078','#b4436c','#e8e1d0']},
+  {sky:'#e9a86b',ground:'#7d6a52',subj:'#2f5f8a',c:['#e9d8a6','#94d2bd','#0a9396','#ee9b00','#ae2012']},
+  {sky:'#2c3a5e',ground:'#3d4a3c',subj:'#f4d35e',c:['#d8f3dc','#95d5b2','#e76f51','#f4a261','#8ab0c4']}];
+let palI=0;
+function applyPalette(){const p=palettes[palI];world.background.set(p.sky);world.fog.color.set(p.sky);groundMat.color.set(p.ground);subjMat.color.set(p.subj);boxMats.forEach((m,i)=>m.color.set(p.c[i]));
+  hemi.intensity=palI===2?.55:.75;}
+applyPalette();
+
+const rc=new T.PerspectiveCamera(45,16/9,0.1,400); rc.rotation.order='YXZ';
+const rig={pos:new T.Vector3(),yaw:0,pitch:0,roll:0,tanV:Math.tan(22.5*D2R),prevPos:new T.Vector3(),prevTan:0,justCut:true,anchor:null,depth:10,time:0};
+const cv={pan:0,tilt:0,roll:0,dolly:0,zoom:0,truck:0,crane:0,dz:0};
+const BASE={pan:0.5,tilt:0.35,roll:0.35,dolly:1.6,zoom:0.45,truck:1.6,crane:1.0,dz:1.3};
+const Mrig={yaw:0,pitch:0,roll:0,fwd:0,rx:0,uy:0,dolly:0,truck:0,crane:0,zoom:0};
+const FRAMES=[{n:'16:9',x:0,y:0,w:RW,h:RH},{n:'2.39:1',x:0,y:46,w:RW,h:268},{n:'4:3',x:80,y:0,w:480,h:RH}];
+let frameI=0, speed=1;
+const ray=new T.Raycaster(), C0=new T.Vector2(0,0);
+const rgt=new T.Vector3(), rup=new T.Vector3(), rfw=new T.Vector3(), dv=new T.Vector3();
+
+function resetRigCam(){rig.pos.set(0,1.5,6.5);rig.yaw=0;rig.pitch=-0.03;rig.roll=0;rig.tanV=Math.tan(22.5*D2R);rig.anchor=null;rig.justCut=true;for(const k in cv)cv[k]=0;}
+function doCut(){
+  const a=rnd()*6.283, r=6+rnd()*7;
+  rig.pos.set(Math.sin(a)*r,1.1+rnd()*1.2,Math.cos(a)*r); rig.yaw=a; rig.pitch=-0.04; rig.roll=0; rig.tanV=Math.tan(22.5*D2R);
+  rig.anchor=null; for(const k in cv)cv[k]=0;
+  palI=(palI+1)%palettes.length; applyPalette(); rig.justCut=true;
+}
+function rigCamAxes(){rc.position.copy(rig.pos);rc.rotation.set(rig.pitch,rig.yaw,-rig.roll);rc.updateMatrixWorld();
+  rgt.set(1,0,0).applyQuaternion(rc.quaternion);rup.set(0,1,0).applyQuaternion(rc.quaternion);rfw.set(0,0,-1).applyQuaternion(rc.quaternion);}
+function centerHit(){const F=FRAMES[frameI];rc.aspect=F.w/F.h;rc.fov=2*Math.atan(rig.tanV)/D2R;rc.updateProjectionMatrix();
+  ray.setFromCamera(C0,rc);const h=ray.intersectObjects(solids,false);return h.length?h[0]:null;}
+
+const held=new Set(), tourHeld=new Set();
+const has=a=>held.has(a)||tourHeld.has(a);
+function rigUpdate(dt){
+  const ax2=(p,m)=>(has(p)?1:0)-(has(m)?1:0);
+  const tg={pan:ax2('panL','panR'),tilt:ax2('tiltU','tiltD'),roll:ax2('rollR','rollL'),dolly:ax2('in','out'),zoom:ax2('zin','zout'),truck:ax2('trR','trL'),crane:ax2('crU','crD'),dz:ax2('dzIn','dzOut')};
+  const sm=Math.min(1,dt*5);
+  for(const k in cv) cv[k]+=(tg[k]*BASE[k]*speed-cv[k])*sm;
+  rig.prevPos.copy(rig.pos); rig.prevTan=rig.tanV;
+  rig.yaw+=cv.pan*dt; rig.pitch=Math.max(-1.2,Math.min(1.2,rig.pitch+cv.tilt*dt)); rig.roll+=cv.roll*dt;
+  rigCamAxes();
+  rig.pos.addScaledVector(rfw,cv.dolly*dt).addScaledVector(rgt,cv.truck*dt).addScaledVector(rup,cv.crane*dt);
+  rig.tanV*=Math.exp(-cv.zoom*dt);
+  if(tg.dz!==0&&!rig.anchor){const h=centerHit();const pt=h?h.point.clone():rig.pos.clone().addScaledVector(rfw,20);rig.anchor={pt,K:rig.tanV*dv.copy(pt).sub(rig.pos).dot(rfw)};}
+  if(rig.anchor){
+    const d0=dv.copy(rig.anchor.pt).sub(rig.pos).dot(rfw);
+    if(d0-cv.dz*dt>0.8&&rig.anchor.K/(d0-cv.dz*dt)<Math.tan(60*D2R)) rig.pos.addScaledVector(rfw,cv.dz*dt);
+    else cv.dz=0;
+    const d=dv.copy(rig.anchor.pt).sub(rig.pos).dot(rfw); if(d>0.5) rig.tanV=rig.anchor.K/d;
+    if(tg.dz===0&&Math.abs(cv.dz)<0.01) rig.anchor=null;
+  }
+  rig.tanV=Math.max(Math.tan(4*D2R),Math.min(Math.tan(60*D2R),rig.tanV));
+  rig.pos.y=Math.max(0.25,rig.pos.y);
+  rigCamAxes();
+  if(rig.justCut){for(const k in Mrig)Mrig[k]=0;}
+  else{
+    dv.copy(rig.pos).sub(rig.prevPos);
+    Mrig.yaw=cv.pan; Mrig.pitch=cv.tilt; Mrig.roll=cv.roll;
+    Mrig.dolly=dv.dot(rfw)/dt; Mrig.truck=dv.dot(rgt)/dt; Mrig.crane=dv.dot(rup)/dt;
+    Mrig.zoom=Math.log(rig.prevTan/rig.tanV)/dt;
+    Mrig.fwd=METER*Mrig.dolly+SPEED*ZG*Mrig.zoom;
+    Mrig.rx=METER*Mrig.truck; Mrig.uy=METER*Mrig.crane;
+  }
+}
+function renderRig(){
+  const F=FRAMES[frameI];
+  rr.setScissorTest(false); rr.setViewport(0,0,RW,RH); rr.setClearColor(0x000000,1); rr.clear();
+  rr.setViewport(F.x,F.y,F.w,F.h); rr.setScissor(F.x,F.y,F.w,F.h); rr.setScissorTest(true);
+  rr.render(world,rc);
+}
+function rigFov(){const F=FRAMES[frameI];return{h:2*Math.atan(rig.tanV*F.w/F.h)*RW/F.w,v:2*Math.atan(rig.tanV)*RH/F.h};}
+const rigTex=new T.CanvasTexture(rigCanvas); rigTex.encoding=T.sRGBEncoding;
+
+/* ---------- tour ---------- */
+const TOUR=[
+  {n:'Locked off',d:2.5,a:[]},{n:'Push in',d:2.5,a:['in']},{n:'Pan left',d:3,a:['panL']},{n:'Pan right',d:3,a:['panR']},
+  {n:'Truck right',d:2.5,a:['trR']},{n:'Cut',d:0,cut:1},{n:'Locked off',d:1.5,a:[]},{n:'Pull out',d:2.5,a:['out']},
+  {n:'Tilt up',d:1.5,a:['tiltU']},{n:'Tilt down',d:1.5,a:['tiltD']},{n:'Crane up',d:2,a:['crU']},
+  {n:'Roll right',d:1.5,a:['rollR']},{n:'Roll left',d:1.5,a:['rollL']},
+  {n:'Cut to 2.39:1',d:0,cut:1,frame:1},{n:'Locked off',d:1.5,a:[]},{n:'Dolly zoom',d:3.5,a:['dzIn']},{n:'Locked off',d:1,a:[]},
+  {n:'Zoom in',d:2,a:['zin']},{n:'Zoom out',d:2,a:['zout']},{n:'Cut to 16:9',d:0,cut:1,frame:0}];
+const tour={on:true,i:0,t:0};
+function tourApply(){const s=TOUR[tour.i];tourHeld.clear();(s.a||[]).forEach(a=>tourHeld.add(a));if(s.frame!==undefined)setFrame(s.frame);if(s.cut)doCut();}
+function tourStep(dt){if(!tour.on)return;tour.t+=dt;let g=0;while(tour.t>=TOUR[tour.i].d&&g++<5){tour.t-=TOUR[tour.i].d;tour.i=(tour.i+1)%TOUR.length;tourApply();}}
+function stopTour(){if(!tour.on)return;tour.on=false;tourHeld.clear();$('tour').textContent='Run tour';$('hint').textContent='Test rig. Hold a move to drive the camera.';}
+function startTour(){tour.on=true;tour.i=0;tour.t=0;held.clear();setFrame(0);resetRigCam();resetSnake();tourApply();$('tour').textContent='Stop tour';$('hint').textContent='Test rig. A tour is running; hold any move to take over.';}
+
+/* ---------- sources ---------- */
+let source='rig', vtex=null, fileName='', paused=false;
+function setFrame(i){frameI=i;$('frame').textContent='Frame '+FRAMES[i].n;}
+function useRig(){
+  if(explore) exitExplore();
+  source='rig'; if(!vid.paused) vid.pause(); paused=false;
+  screenMat.map=rigTex; screenMat.needsUpdate=true; aspect=16/9; screen.scale.set(aspect,1,1);
+  sizeAnalysis(); layout(); resetSnake(); rig.justCut=true;
+  $('rigPanel').hidden=false; $('scrubRow').hidden=true; showMsg(''); syncFollow(); syncPlay();
+  $('hint').textContent=tour.on?'Test rig. A tour is running; hold any move to take over.':'Test rig. Hold a move to drive the camera.';
+}
+function layout(){
+  const w=stage.clientWidth||1,h=stage.clientHeight||1;
+  ren.setSize(w,h,false); cam.aspect=w/h; cam.updateProjectionMatrix();
+  const th=Math.tan(22.5*D2R);
+  D=Math.max(1/(0.56*2*th),aspect/(0.76*2*th*cam.aspect));
+  scene.fog.near=D+1; scene.fog.far=D+45;
+}
+window.addEventListener('resize',layout);
+const msg=$('msg'); function showMsg(t){msg.textContent=t;msg.hidden=!t;}
+
+$('file').addEventListener('change',e=>{
+  const f=e.target.files&&e.target.files[0]; if(!f) return;
+  showMsg(''); fileName=f.name;
+  if(vid.src) URL.revokeObjectURL(vid.src);
+  vid.src=URL.createObjectURL(f); vid.load(); e.target.value='';
+});
+vid.addEventListener('loadedmetadata',()=>{
+  if(!vid.videoWidth){showMsg("That file has no picture this browser can show. Try an MP4 (H.264) or WebM file.");return;}
+  if(explore) exitExplore();
+  source='video'; held.clear(); stopTour();
+  aspect=vid.videoWidth/vid.videoHeight;
+  if(vtex) vtex.dispose();
+  vtex=new T.VideoTexture(vid); vtex.encoding=T.sRGBEncoding;
+  screenMat.map=vtex; screenMat.needsUpdate=true; screen.scale.set(aspect,1,1);
+  sizeAnalysis(); layout(); resetSnake(); ensureSeekVid();
+  $('rigPanel').hidden=true; $('scrubRow').hidden=false; $('trkOpts').hidden=false;
+  $('hint').textContent=fileName;
+  vid.play().then(syncPlay).catch(syncPlay);
+});
+vid.addEventListener('error',()=>{if(vid.src)showMsg("This browser can't play that file. Try an MP4 (H.264) or WebM file.");});
+['play','pause','ended'].forEach(ev=>vid.addEventListener(ev,syncPlay));
+
+/* ---------- controls ---------- */
+/* ---------- explore mode ---------- */
+let explore=false, tween=null, savedHint='';
+const controls=new T.OrbitControls(cam,ren.domElement);
+controls.enabled=false; controls.enableDamping=true; controls.dampingFactor=0.08; controls.screenSpacePanning=true;
+ren.domElement.style.touchAction='';
+const fly=new Set(), FLY={KeyW:'f',KeyS:'b',KeyA:'l',KeyD:'r',KeyR:'u',KeyF:'d'};
+function snakeBounds(){
+  const b=new T.Box3(), v=new T.Vector3();
+  for(let i=0;i<n*4;i++){v.fromArray(pos,i*3);b.expandByPoint(v);}
+  b.expandByPoint(P);
+  const s=b.getBoundingSphere(new T.Sphere()); s.radius=Math.max(2,s.radius); return s;
+}
+function fitView(){
+  const s=snakeBounds(), dist=s.radius/Math.sin(cam.fov*D2R/2)*1.05;
+  const dir=cam.position.clone().sub(s.center); dir.y=Math.max(dir.y,0);
+  if(dir.lengthSq()<1e-6) dir.set(1,0.5,1);
+  dir.normalize().add(new T.Vector3(0,0.35,0)).normalize();
+  cam.far=Math.max(300,dist+s.radius*4); cam.updateProjectionMatrix();
+  controls.maxDistance=dist*6;
+  tween={t:0,dur:1.3,p0:cam.position.clone(),p1:s.center.clone().addScaledVector(dir,dist),c0:controls.enabled?controls.target.clone():P.clone(),c1:s.center.clone()};
+}
+function enterExplore(){
+  if(explore) return;
+  explore=true; held.clear();
+  if(source==='video'&&!vid.paused) vid.pause();
+  if(source==='rig'){paused=true;}
+  syncPlay();
+  cam.up.set(0,1,0);
+  scene.fog.near=1e5; scene.fog.far=2e5;
+  fitView();
+  controls.enabled=true; ren.domElement.style.touchAction='none';
+  $('explore').textContent='Back to playback'; $('fit').hidden=false; $('exploreNote').hidden=false;
+  savedHint=$('hint').textContent; lastSlice=-1; restoreHint();
+}
+function exitExplore(){
+  if(!explore) return;
+  explore=false; tween=null; fly.clear(); pane.visible=false; inside=-1;
+  controls.enabled=false; ren.domElement.style.touchAction='';
+  cam.far=300; cam.updateProjectionMatrix(); layout();
+  $('explore').textContent='Explore snake'; $('fit').hidden=true; $('exploreNote').hidden=true;
+  $('hint').textContent=savedHint;
+}
+$('explore').addEventListener('click',()=>{if(explore)toggle();else enterExplore();});
+$('fit').addEventListener('click',fitView);
+vid.addEventListener('ended',enterExplore);
+/* ---------- slice view: the movie frame at your spot inside the snake ---------- */
+const paneMat=new T.MeshBasicMaterial({color:0xffffff,side:T.DoubleSide,toneMapped:false});
+const pane=new T.Mesh(new T.PlaneGeometry(1,1),paneMat); pane.visible=false; scene.add(pane);
+pane.add(new T.LineSegments(new T.EdgesGeometry(new T.PlaneGeometry(1,1)),new T.LineBasicMaterial({color:0xe2b866})));
+const slice2D=document.createElement('canvas'); slice2D.width=RW; slice2D.height=RH;
+const sliceCtx=slice2D.getContext('2d');
+const sliceTex=new T.CanvasTexture(slice2D); sliceTex.encoding=T.sRGBEncoding;
+let seekVid=null, seekTex=null, want=-1, seeking=false, inside=-1, lastSlice=-1;
+function ensureSeekVid(){
+  if(!seekVid){
+    seekVid=document.createElement('video'); seekVid.muted=true; seekVid.playsInline=true; seekVid.preload='auto';
+    seekVid.addEventListener('seeked',()=>{seeking=false;if(want>=0&&Math.abs(seekVid.currentTime-want)>0.02){seeking=true;seekVid.currentTime=want;}});
+    seekTex=new T.VideoTexture(seekVid); seekTex.encoding=T.sRGBEncoding;
+  }
+  seekVid.src=vid.src; seekVid.load();
+}
+function wantTime(t){
+  if(!seekVid) return; want=t;
+  if(!seeking&&Math.abs(seekVid.currentTime-t)>0.02){seeking=true;try{seekVid.currentTime=t;}catch(_){seeking=false;}}
+}
+function renderPose(i){
+  const o=i*9, sv={p:rig.pos.clone(),yaw:rig.yaw,pitch:rig.pitch,roll:rig.roll,tanV:rig.tanV,f:frameI,pal:palI};
+  rig.pos.set(rigPose[o],rigPose[o+1],rigPose[o+2]); rig.yaw=rigPose[o+3]; rig.pitch=rigPose[o+4]; rig.roll=rigPose[o+5]; rig.tanV=rigPose[o+6];
+  frameI=rigPose[o+7]; palI=rigPose[o+8]; applyPalette();
+  rigCamAxes(); centerHit(); renderRig();
+  sliceCtx.drawImage(rigCanvas,0,0); sliceTex.needsUpdate=true;
+  rig.pos.copy(sv.p); rig.yaw=sv.yaw; rig.pitch=sv.pitch; rig.roll=sv.roll; rig.tanV=sv.tanV; frameI=sv.f; palI=sv.pal; applyPalette(); rigCamAxes();
+}
+const rC=new T.Vector3(), rX=new T.Vector3(), rU=new T.Vector3(), rF=new T.Vector3(), tmp=new T.Vector3(), look=new T.Vector3(), basis=new T.Matrix4();
+function ringFrame(i){
+  const b=i*12;
+  rC.fromArray(ringC,i*3);
+  rX.set(pos[b]-pos[b+3],pos[b+1]-pos[b+4],pos[b+2]-pos[b+5]);
+  rU.set(pos[b+9]-pos[b],pos[b+10]-pos[b+1],pos[b+11]-pos[b+2]);
+  const w=rX.length(), h=rU.length(); rX.normalize(); rU.normalize();
+  rF.crossVectors(rU,rX).normalize();
+  return {w,h};
+}
+function sliceStep(){
+  inside=-1;
+  if(n<2){pane.visible=false;return;}
+  const cp=cam.position; let bi=0,bd=1e18;
+  for(let i=0;i<n;i++){const o=i*3,dx=ringC[o]-cp.x,dy=ringC[o+1]-cp.y,dz=ringC[o+2]-cp.z,d=dx*dx+dy*dy+dz*dz;if(d<bd){bd=d;bi=i;}}
+  let s0=ringFrame(bi);
+  tmp.copy(cp).sub(rC);
+  if(Math.abs(tmp.dot(rX))>s0.w/2||Math.abs(tmp.dot(rU))>s0.h/2||Math.abs(tmp.dot(rF))>Math.max(s0.w,s0.h)){pane.visible=false;lastSlice=-1;restoreHint();return;}
+  inside=bi;
+  cam.getWorldDirection(look); const s=look.dot(rF)>=0?1:-1;
+  const tv=Math.tan(cam.fov*D2R/2), ahead=Math.max(s0.h/2/tv,s0.w/2/(tv*cam.aspect))*1.04;
+  let j=bi;
+  for(let k=0;k<3000&&j+s>=0&&j+s<n;k++){j+=s;tmp.fromArray(ringC,j*3);if(tmp.distanceTo(cp)>=ahead)break;}
+  const sz=ringFrame(j);
+  if(s<0) rX.negate();
+  tmp.crossVectors(rX,rU);
+  basis.makeBasis(rX,rU,tmp); pane.quaternion.setFromRotationMatrix(basis);
+  pane.position.copy(rC); pane.scale.set(sz.w*0.995,sz.h*0.995,1);
+  const wantMap=source==='video'?seekTex:sliceTex;
+  if(paneMat.map!==wantMap){paneMat.map=wantMap;paneMat.needsUpdate=true;}
+  pane.visible=!!wantMap;
+  if(bi!==lastSlice){
+    lastSlice=bi;
+    if(source==='video') wantTime(ringT[bi]); else renderPose(bi);
+    $('hint').textContent='Inside the snake at '+fmt(ringT[bi]);
+  }
+}
+function restoreHint(){if(explore)$('hint').textContent='Exploring the snake. Fly inside it to see the frame from that moment.';}
+
+const fv1=new T.Vector3(), fv2=new T.Vector3();
+function exploreStep(dt){
+  if(tween){
+    tween.t+=dt; const k=Math.min(1,tween.t/tween.dur), e=k<.5?4*k*k*k:1-Math.pow(-2*k+2,3)/2;
+    cam.position.lerpVectors(tween.p0,tween.p1,e); controls.target.lerpVectors(tween.c0,tween.c1,e);
+    if(k>=1) tween=null;
+  }
+  if(fly.size){
+    const sp=(inside>=0?1.2:Math.max(1,cam.position.distanceTo(controls.target))*0.35)*dt;
+    cam.getWorldDirection(fv1); fv2.crossVectors(fv1,cam.up).normalize();
+    const mv=new T.Vector3();
+    if(fly.has('f'))mv.add(fv1); if(fly.has('b'))mv.sub(fv1);
+    if(fly.has('r'))mv.add(fv2); if(fly.has('l'))mv.sub(fv2);
+    if(fly.has('u'))mv.add(cam.up); if(fly.has('d'))mv.sub(cam.up);
+    if(mv.lengthSq()){mv.normalize().multiplyScalar(sp);cam.position.add(mv);controls.target.add(mv);tween=null;}
+  }
+  controls.update();
+  sliceStep();
+}
+
+const playBtn=$('play');
+function isPlaying(){return !explore&&(source==='rig'?!paused:!vid.paused);}
+function syncPlay(){playBtn.textContent=isPlaying()?'Pause':'Play';}
+function toggle(){
+  if(explore){exitExplore(); if(source==='rig')paused=false; else if(!vid.ended)vid.play().catch(()=>{}); syncPlay(); return;}
+  if(source==='rig')paused=!paused;else if(vid.paused)vid.play().catch(()=>{});else vid.pause();syncPlay();
+}
+playBtn.addEventListener('click',toggle);
+$('srcRig').addEventListener('click',useRig);
+$('reset').addEventListener('click',()=>{resetSnake();rig.justCut=true;});
+
+const holds=[...document.querySelectorAll('.hold')];
+holds.forEach(b=>{
+  const a=b.dataset.a;
+  b.addEventListener('pointerdown',e=>{e.preventDefault();stopTour();held.add(a);try{b.setPointerCapture(e.pointerId);}catch(_){}});
+  const up=()=>held.delete(a);
+  b.addEventListener('pointerup',up); b.addEventListener('pointercancel',up); b.addEventListener('lostpointercapture',up);
+  b.addEventListener('contextmenu',e=>e.preventDefault());
+  b.addEventListener('keydown',e=>{if((e.key===' '||e.key==='Enter')&&!e.repeat){e.preventDefault();e.stopPropagation();stopTour();held.add(a);}});
+  b.addEventListener('keyup',e=>{if(e.key===' '||e.key==='Enter'){e.stopPropagation();held.delete(a);}});
+  b.addEventListener('blur',up);
+});
+const KEYS={ArrowLeft:'panL',ArrowRight:'panR',ArrowUp:'tiltU',ArrowDown:'tiltD',KeyQ:'rollL',KeyE:'rollR',KeyW:'in',KeyS:'out',KeyZ:'zin',KeyX:'zout',KeyA:'trL',KeyD:'trR',KeyR:'crU',KeyF:'crD',KeyV:'dzIn',KeyB:'dzOut'};
+const typing=e=>e.target instanceof HTMLInputElement&&e.target.type!=='range';
+document.addEventListener('keydown',e=>{
+  if(typing(e)||e.metaKey||e.ctrlKey||e.altKey) return;
+  if(e.code==='Space'&&!(e.target instanceof HTMLButtonElement)){e.preventDefault();toggle();return;}
+  if(explore){
+    if(e.code==='Escape'){exitExplore();return;}
+    const f=FLY[e.code]; if(f){e.preventDefault();fly.add(f);}
+    return;
+  }
+  if(source!=='rig') return;
+  const a=KEYS[e.code];
+  if(a){e.preventDefault();if(!e.repeat){stopTour();held.add(a);}}
+  else if(e.code==='KeyC'&&!e.repeat){stopTour();doCut();}
+});
+document.addEventListener('keyup',e=>{const a=KEYS[e.code];if(a)held.delete(a);const f=FLY[e.code];if(f)fly.delete(f);});
+window.addEventListener('blur',()=>{held.clear();fly.clear();});
+
+$('cut').addEventListener('click',()=>{stopTour();doCut();});
+$('frame').addEventListener('click',()=>{stopTour();setFrame((frameI+1)%FRAMES.length);});
+$('camReset').addEventListener('click',()=>{stopTour();resetRigCam();});
+$('tour').addEventListener('click',()=>{if(tour.on)stopTour();else startTour();});
+$('speed').addEventListener('input',e=>{speed=+e.target.value;$('speedOut').textContent=speed+'×';});
+
+function syncFollow(){
+  const you=opts.follow==='you';
+  $('fYou').setAttribute('aria-pressed',String(you)); $('fTrk').setAttribute('aria-pressed',String(!you));
+  $('followNote').textContent=you
+    ?'The snake copies the lens exactly, as if a flat rectangle were taped over it. It turns when the lens turns and moves when the lens moves, meter for meter, while drifting forward as time passes.'
+    :'The snake uses only what the tracker reads from the picture, the same as with a movie. Use this to check the tracker.';
+  $('trkOpts').hidden=you&&source==='rig';
+}
+$('fYou').addEventListener('click',()=>{opts.follow='you';syncFollow();});
+$('fTrk').addEventListener('click',()=>{opts.follow='tracker';syncFollow();});
+function setMode(sl){opts.slide=sl;$('mBend').setAttribute('aria-pressed',String(!sl));$('mSlide').setAttribute('aria-pressed',String(sl));}
+$('mBend').addEventListener('click',()=>setMode(false));
+$('mSlide').addEventListener('click',()=>setMode(true));
+$('bend').addEventListener('input',e=>{opts.bend=+e.target.value;$('bendOut').textContent=opts.bend.toFixed(1)+'×';});
+
+const scrub=$('scrub'); let scrubbing=false;
+scrub.addEventListener('input',()=>{scrubbing=true;if(vid.duration)vid.currentTime=scrub.value/1000*vid.duration;});
+scrub.addEventListener('change',()=>{scrubbing=false;});
+const fmt=s=>{s=Math.max(0,s|0);const h=(s/3600)|0,m=((s%3600)/60)|0,x=s%60;return(h?h+':'+String(m).padStart(2,'0'):m)+':'+String(x).padStart(2,'0');};
+
+/* ---------- readout ---------- */
+const read=$('read'); let lastRead=0;
+const sg=(v,d)=>{const r=v.toFixed(d);return(+r>0?'+':+r<0?'':'')+(+r===0?(0).toFixed(d):r);};
+const deg=v=>sg(v/D2R,0)+'°/s';
+const ms=v=>sg(v,1)+' m/s';
+function readout(now){
+  if(now-lastRead<200) return; lastRead=now;
+  let h='';
+  if(source==='rig'){
+    const M=Mrig;
+    h+='<b>Lens</b><span>pan '+deg(M.yaw)+' · tilt '+deg(M.pitch)+' · roll '+deg(M.roll)+' · dolly '+ms(M.dolly)+' · truck '+ms(M.truck)+' · crane '+ms(M.crane)+
+      ' · zoom '+sg(M.zoom*100,0)+'%/s · growth '+growth(M)+'</span>';
+  }
+  h+='<b>Tracker</b><span>pan '+deg(S.yaw)+' · tilt '+deg(S.pitch)+' · roll '+deg(S.roll)+' · push '+sg(S.zoom*100,0)+'%/s · growth '+growth({fwd:SPEED*ZG*S.zoom})+'</span>';
+  h+='<b>Frame</b><span>'+(aspect*wF/hF).toFixed(2)+':1 · cuts '+cuts+(source==='rig'&&tour.on?' · tour: '+TOUR[tour.i].n:'')+(n>=CAP?' · snake full, reset it':'')+'</span>';
+  read.innerHTML=h;
+  if(source==='video'&&vid.duration){if(!scrubbing)scrub.value=Math.round(vid.currentTime/vid.duration*1000);$('time').textContent=fmt(vid.currentTime)+' / '+fmt(vid.duration);}
+}
+
+/* ---------- main loop ---------- */
+let lastNow=performance.now();
+function loop(now){
+  const rdt=Math.min(0.1,Math.max(0.001,(now-lastNow)/1000)); lastNow=now;
+  if(source==='rig'){
+    if(!paused){
+      tourStep(rdt);
+      rig.time+=rdt;
+      rigUpdate(rdt);
+      renderRig(); rigTex.needsUpdate=true;
+      const fv=rigFov();
+      const cutSeen=analyze(rigCanvas,rig.time,fv.h,fv.v);
+      const isCut=opts.follow==='you'?rig.justCut&&n>1:cutSeen;
+      if(isCut) cuts++;
+      integrate(opts.follow==='you'?Mrig:trackerInput(fv.h,fv.v),rdt);
+      if(isCut) pushRing();
+      rig.justCut=false;
+    }
+  }else if(vid.readyState>=2&&vid.currentTime!==lastT){
+    const hf=0.85, vf2=2*Math.atan(Math.tan(hf/2)/aspect), t0=lastT;
+    try{
+      const cut=analyze(vid,vid.currentTime,hf,vf2);
+      const dt=vid.currentTime-t0;
+      if(t0>=0&&dt>0&&dt<0.5){integrate(trackerInput(hf,vf2),dt);if(cut){cuts++;pushRing();}}
+    }catch(err){showMsg("Couldn't read frames from this video.");}
+  }
+  flush();
+  holds.forEach(b=>b.classList.toggle('on',source==='rig'&&!explore&&has(b.dataset.a)));
+  axes(); head.position.copy(P); head.quaternion.copy(Q);
+  if(explore) exploreStep(rdt);
+  else{cam.position.copy(P).addScaledVector(vf,D); cam.up.copy(vu); cam.lookAt(P);}
+  ren.render(scene,cam);
+  readout(now);
+  requestAnimationFrame(loop);
+}
+resetRigCam(); useRig(); tourApply(); $('tour').textContent='Stop tour';
+requestAnimationFrame(loop);
+})();
+</script>
+
+</body>
+</html>
